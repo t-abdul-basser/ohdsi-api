@@ -2,6 +2,58 @@ var loopback = require('loopback').Model;
 module.exports = function(cdm){
 
   var returns = { arg: 'data', type: ['cdm'], root: true };
+
+  cdm.conceptsGet = cdm.conceptsPost = 
+    function(cdmSchema, resultsSchema, query,
+             queryName, cb) {
+      var ds = cdm.dataSource;
+      let allParams = 
+        {cdmSchema, resultsSchema, queryName};
+
+      let sql;
+      query = query || queryName;
+      switch (query) {
+        case 'conceptStats':
+          sql = `
+                select *
+                from ${resultsSchema}.concept_id_occurrence
+          `;
+          break;
+        case 'conceptCount':
+          sql = `select count(*) from ${cdmSchema}.concept`;
+          break;
+      }
+      console.log('==============>\n', allParams, sql, '\n<==============\n');
+      ds.connector.query(sql, [], function(err, rows) {
+        if (err) console.error(err);
+        cb(err, rows);
+      });
+    };
+
+  var conceptsAccepts = [
+      {arg: 'cdmSchema', type: 'string', required: true },
+      {arg: 'resultsSchema', type: 'string', required: true},
+      {arg: 'query', type: 'string', required: false},
+      {arg: 'queryName', type: 'string', required: false, default: 'All concept stats'},
+  ];
+
+  cdm.remoteMethod('conceptsGet', {
+    accepts: conceptsAccepts,
+    returns,
+    accessType: 'READ',
+    http: {
+      verb: 'get'
+    }
+  });
+  cdm.remoteMethod('conceptsPost', {
+    accepts: conceptsAccepts,
+    returns,
+  });
+
+
+
+
+
   cdm.sampleUsersGet = cdm.sampleUsersPost = 
     function(cdmSchema, resultsSchema, concept_id, sampleCnt, 
              measurename, bundle, entityName, maxgap, from, to, queryName, cb) {

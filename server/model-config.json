@@ -32,12 +32,8 @@
     "dataSource": "db",
     "public": false
   },
-  "DrugRollupStats": {
-    "dataSource": "ucd-synpuf5pct-results",
-    "public": true
-  },
   "cdm": {
-    "dataSource": "ucd-synpuf5pct",
+    "dataSource": "ucd",
     "public": true
   }
 }
