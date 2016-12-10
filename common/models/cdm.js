@@ -1,38 +1,52 @@
-var loopback = require('loopback').Model;
+//var loopback = require('loopback');
+
 module.exports = function(cdm){
 
   var returns = { arg: 'data', type: ['cdm'], root: true };
 
   cdm.conceptsGet = cdm.conceptsPost = 
-    function(cdmSchema, resultsSchema, query,
+    function(cdmSchema, resultsSchema, attr, query,
              queryName, cb) {
       var ds = cdm.dataSource;
       let allParams = 
         {cdmSchema, resultsSchema, queryName};
 
-      let sql;
+      let sql = '';
       query = query || queryName;
       switch (query) {
         case 'conceptStats':
-          sql = `
-                select *
-                from ${resultsSchema}.concept_id_occurrence
-          `;
+          if (attr) {
+            sql = `select ${attr}, sum(count) as dbrecs, count(*) as conceptrecs
+                    from ${resultsSchema}.concept_info
+                    group by 1`;
+          } else {
+            sql = `select *
+                  from ${resultsSchema}.concept_info_stats`;
+          }
           break;
         case 'conceptCount':
           sql = `select count(*) from ${cdmSchema}.concept`;
           break;
+        case 'classRelations':
+          sql =  `select * 
+                  from ${resultsSchema}.class_relations 
+                  where invalid_1 = 'f' 
+                    and invalid_2 = 'f' 
+                  order by 1,2,5,6,11,8,9,10,16,13,14,15`;
       }
       console.log('==============>\n', allParams, sql, '\n<==============\n');
       ds.connector.query(sql, [], function(err, rows) {
         if (err) console.error(err);
-        cb(err, rows);
+        //console.log(Object.keys(rows));
+        cb(err, rows.slice(0,1000));
       });
     };
 
   var conceptsAccepts = [
       {arg: 'cdmSchema', type: 'string', required: true },
       {arg: 'resultsSchema', type: 'string', required: true},
+      {arg: 'attr', type: 'string', required: false},
+      //{arg: 'fullInfo', type: 'boolean', required: false, default: false},
       {arg: 'query', type: 'string', required: false},
       {arg: 'queryName', type: 'string', required: false, default: 'All concept stats'},
   ];
@@ -568,3 +582,50 @@ module.exports = function(cdm){
 
 };
 
+/*
+console.log(Object.keys(loopback));
+
+var memory = loopback.createDataSource({
+  connector: loopback.Memory,
+  //file: "mydata.json"
+});
+var MemModel = loopback.PersistedModel.extend('var MemModel');
+MemModel.setup = function() {
+  var MemModel = this;
+
+  var returns = { arg: 'data', type: ['cdm'], root: true };
+  cdm.saveGet = cdm.savePost = 
+    function(key, val, cb) {
+      var ds = MemModel.dataSource;
+
+      console.log('==============>\n', key, val, '\n<==============\n');
+      ds.connector.query(sql, [], function(err, rows) {
+        if (err) console.error(err);
+        //console.log(Object.keys(rows));
+        cb(err, rows.slice(0,1000));
+      });
+    };
+
+  var conceptsAccepts = [
+      {arg: 'cdmSchema', type: 'string', required: true },
+      {arg: 'resultsSchema', type: 'string', required: true},
+      {arg: 'fullInfo', type: 'boolean', required: false, default: false},
+      {arg: 'query', type: 'string', required: false},
+      {arg: 'queryName', type: 'string', required: false, default: 'All concept stats'},
+  ];
+
+  cdm.remoteMethod('conceptsGet', {
+    accepts: conceptsAccepts,
+    returns,
+    accessType: 'READ',
+    http: {
+      verb: 'get'
+    }
+  });
+  cdm.remoteMethod('conceptsPost', {
+    accepts: conceptsAccepts,
+    returns,
+  });
+
+}
+*/
