@@ -106,40 +106,71 @@ function concepts(cdm) { // consolidating?
     {arg: 'includeInvalidConcepts', type: 'boolean', required: false, default: true},
     {arg: 'includeNoMatchingConcepts', type: 'boolean', required: false, default: true},
     {arg: 'includeNonStandardConcepts', type: 'boolean', required: false, default: false},
-    {arg: 'domain_id', type: 'string', required: false },
+    //{arg: 'attr', type: 'string', required: false},
   ];
   const otherArgs = [
+    {arg: 'dataRequested', type: 'string', required: true},
     {arg: 'queryName', type: 'string', required: false, default: 'All concept stats'},
+    {arg: 'domain_id', type: 'string', required: false,
+              validCheck: v => _.includes(['Drug','Condition','Procedure'],v)},
+    {arg: 'targetOrSource', type: 'string', required: false, default: 'target',
+              validCheck: v => _.includes(['target','source'],v)},
+    {arg: 'includeTypeCol', type: 'boolean', required: false, default: true},
+    //{arg: 'query', type: 'string', required: true},
   ];
   var accepts = [].concat(schemaArgs, filterArgs, otherArgs);
 
-  function filterConditions(params) {
-    let filters = [];
-    if (params.includeFiltersOnly) {
-      let ors = [];
-      if (params.includeInvalidConcepts) ors.push('c.invalid_reason is not null');
-      if (params.includeNoMatchingConcepts) ors.push('c.concept_id = 0');
-      if (params.includeNonStandardConcepts) ors.push('c.standard_concept is null');
-      ors.length && filters.push(orItems(ors));
-    } else {
-      let ands = [];
-      if (params.excludeInvalidConcepts) ands.push('c.invalid_reason is null');
-      if (params.excludeNoMatchingConcepts) ands.push('c.concept_id != 0');
-      if (params.excludeNonStandardConcepts) ands.push('c.standard_concept is not null');
-      ands.length && filters.push(andItems(ands));
-    }
-    return filters;
-  }
-  function conceptSql(params, flavor) {
+  cdm.concepts = function(..._params) {
+    var accepts = [].concat(schemaArgs, filterArgs, otherArgs);
+    const cb = _params.pop();
+    let params = toNamedParams(_params, accepts);
+    console.log(params);
+    let sql = conceptSql(params);
+    runQuery(cdm, cb, sql, params);
+  };
+
+  cdm.remoteMethod('concepts', { accepts, returns, accessType: 'READ', http: { verb: 'post' } });
+  cdm.remoteMethod('concepts', { accepts, returns, accessType: 'READ', http: { verb: 'get' } });
+
+  function conceptSql(params) {
     let filters = filterConditions(params);
-    let cols =  `
-                  coalesce(sum(cio.count),0) AS exposure_count,
-                  count(*) AS concept_count
-                `;
+    let cols = [];
+    let countCols = [ `coalesce(sum(cio.count),0) AS record_count`,
+                      `count(*) AS concept_count` ];
+    let conceptCols = [];
+    let additionalBreakdownCols = [ 'c.invalid_reason', 
+                                    'c.standard_concept', 
+                                    'c.domain_id', 
+                                    'c.vocabulary_id', 
+                                    'c.concept_class_id'];
+
+    let conceptCol = ({
+                            target: 'target_concept_id',
+                            source: 'source_concept_id'
+                      })[params.targetOrSource];
+
+    /* put this stuff back in for non-aggregate calls
+    let conceptCols = [conceptCol + ' as concept_id'];
+    if (params.includeTypeCol) {
+      conceptCols.push(`ct.concept_name as type_concept_name`);
+    }
+    */
+
+    let typeJoin = '';
+    if (params.includeTypeCol) {
+      typeJoin = `JOIN ${params.cdmSchema}.concept ct on cio.type_concept_id = ct.concept_id and ct.invalid_reason is null`;
+    }
+
     let groupBy = '';
-    switch (flavor) {
+    switch (params.dataRequested) {
       case 'counts':
-        break;  // just the counts
+        cols = cols.concat(countCols);
+        break;
+      case 'agg':
+        cols = cols.concat(conceptCols, additionalBreakdownCols, countCols);
+        groupBy = `group by ${_.range(1, cols.length - countCols.length + 1)}`;
+        break;
+      /*
       case 'target':
         cols = `
                   c.concept_name AS concept_name,
@@ -155,29 +186,21 @@ function concepts(cdm) { // consolidating?
         break;
       case 'source':
         throw new Error("not handling yet");
-      case 'target_agg':
-        cols = `
-                  ct.concept_name AS type_concept_name,
-                  c.invalid_reason, 
-                  c.standard_concept, 
-                  c.domain_id, 
-                  c.vocabulary_id, 
-                  c.concept_class_id,
-                ` + cols;
-        groupBy = `
-                group by ${_.range(1, 7)}
-                  `;
-        break;
+      */
+      default:
+        throw new Error(`not handling concepts/${params.dataRequested} yet`);
     }
+
     let sql = `
-          SELECT  ${cols}
+          SELECT  ${cols.join(', ')}
           FROM ${params.resultsSchema}.concept_id_occurrence cio
-          JOIN ${params.cdmSchema}.concept c ON cio.concept_id = c.concept_id
-          JOIN ${params.cdmSchema}.concept ct on cio.type_concept_id = ct.concept_id and ct.invalid_reason is null
+          JOIN ${params.cdmSchema}.concept c ON cio.${conceptCol} = c.concept_id
+          ${typeJoin}
           ${where(filters)}
           ${groupBy}
         `;
     return sql;
+    /*
     switch (query) {
       case 'conceptStats':
         if (attr) {
@@ -220,6 +243,28 @@ function concepts(cdm) { // consolidating?
                 ${where(filters)}
                 order by 1,2,5,6,11,8,9,10,16,13,14,15`;
     }
+    */
+  }
+
+  function filterConditions(params) {
+    let filters = [];
+    if (params.domain_id) {
+      filters.push(`c.domain_id = '${params.domain_id}'`);
+    }
+    if (params.includeFiltersOnly) {
+      let ors = [];
+      if (params.includeInvalidConcepts) ors.push('c.invalid_reason is not null');
+      if (params.includeNoMatchingConcepts) ors.push('c.concept_id = 0');
+      if (params.includeNonStandardConcepts) ors.push('c.standard_concept is null');
+      ors.length && filters.push(orItems(ors));
+    } else {
+      let ands = [];
+      if (params.excludeInvalidConcepts) ands.push('c.invalid_reason is null');
+      if (params.excludeNoMatchingConcepts) ands.push('c.concept_id != 0');
+      if (params.excludeNonStandardConcepts) ands.push('c.standard_concept is not null');
+      ands.length && filters.push(andItems(ands));
+    }
+    return filters;
   }
 
   let classAccepts = accepts.slice(0).concat({arg: 'domain_id', type: 'string', required: false });
@@ -262,103 +307,6 @@ function concepts(cdm) { // consolidating?
   cdm.remoteMethod('classRelations', { accepts:classAccepts, returns, accessType: 'READ', http: { verb: 'get' } });
   var returns = { arg: 'data', type: ['cdm'], root: true };
 
-  const where = (filters) => filters.length
-                              ? ` where ${filters.join(' and ')} `
-                              : '';
-
-  cdm.concepts = 
-    function(cdmSchema, resultsSchema, attr, 
-             excludeInvalidConcepts, excludeNoMatchingConcepts, excludeNonStandardConcepts,
-             query, queryName, cb) {
-      var ds = cdm.dataSource;
-      let allParams = {
-            cdmSchema, resultsSchema, 
-            excludeInvalidConcepts, excludeNoMatchingConcepts, excludeNonStandardConcepts,
-            query, queryName,
-      }
-
-      let sql = '';
-      query = query || queryName;
-      let filters = [];
-      switch (query) {
-        case 'conceptStats':
-          if (attr) {
-            if (excludeInvalidConcepts) filters.push('invalid_reason is null');
-            if (excludeNoMatchingConcepts) filters.push('concept_id != 0');
-            if (excludeNonStandardConcepts) filters.push('standard_concept is not null');
-            sql = `
-                    select ${attr}, sum(count) as dbrecs, count(*) as conceptrecs
-                    from ${resultsSchema}.concept_info
-                    ${where(filters)}
-                    group by 1`;
-          } else {
-            if (excludeInvalidConcepts) filters.push('invalid = false');
-            if (excludeNoMatchingConcepts) filters.push(`vocabulary_id != 'None'`);
-            if (excludeNonStandardConcepts) filters.push('sc is not null');
-            sql = `
-                    select *
-                    from ${resultsSchema}.concept_info_stats
-                    ${where(filters)}
-                  `;
-          }
-          break;
-        case 'conceptCount':
-          if (excludeInvalidConcepts) filters.push('invalid_reason is null');
-          if (excludeNoMatchingConcepts) filters.push('concept_id != 0');
-          if (excludeNonStandardConcepts) filters.push('standard_concept is not null');
-          sql = `
-                  select count(*) as count
-                  from ${cdmSchema}.concept
-                  ${where(filters)}
-                `;
-          break;
-        case 'classRelations':
-          if (excludeInvalidConcepts) filters.push(`invalid_1 = false`, `invalid_2 = false`);
-          if (excludeNoMatchingConcepts) filters.push(`vocab_1 != 'None'`, `vocab_2 != 'None'`);
-          if (excludeNonStandardConcepts) filters.push('sc_1 is not null', 'sc_2 is not null');
-          sql =  `
-                  select * 
-                  from ${resultsSchema}.class_relations 
-                  ${where(filters)}
-                  order by 1,2,5,6,11,8,9,10,16,13,14,15`;
-      }
-      console.log('==============>\nRequest:\n', allParams, sql, '\n<==============\n');
-      ds.connector.query(sql, [], function(err, rows) {
-        if (err) {
-          console.error(err);
-          cb(err, []);
-        } else {
-          console.log('==============>\nResponse:\n', allParams, sql, `${rows.length} rows`, '\n<==============\n');
-          console.warn("TRUNCATING TO 1000 ROWS!!! FIX THIS (with pagination?)!!!");
-          cb(err, rows.slice(0,1000));
-        }
-      });
-    };
-
-  var conceptsAccepts = [
-      {arg: 'cdmSchema', type: 'string', required: true },
-      {arg: 'resultsSchema', type: 'string', required: true},
-      {arg: 'attr', type: 'string', required: false},
-      {arg: 'excludeInvalidConcepts', type: 'boolean', required: false, default: true},
-      {arg: 'excludeNoMatchingConcepts', type: 'boolean', required: false, default: true},
-      {arg: 'excludeNonStandardConcepts', type: 'boolean', required: false, default: false},
-      //{arg: 'fullInfo', type: 'boolean', required: false, default: false},
-      {arg: 'query', type: 'string', required: true},
-      {arg: 'queryName', type: 'string', required: false, default: 'All concept stats'},
-  ];
-
-  cdm.remoteMethod('concepts', {
-    accepts: conceptsAccepts,
-    returns,
-    accessType: 'READ',
-    http: {
-      verb: 'get'
-    }
-  });
-  cdm.remoteMethod('concepts', {
-    accepts: conceptsAccepts,
-    returns,
-  });
 }
 function sampleUsers(cdm) {
   var returns = { arg: 'data', type: ['cdm'], root: true };
@@ -903,10 +851,9 @@ function cacheDirty(cdm) {
 }
 function runQuery(cdm, cb, sql, params) {
   var ds = cdm.dataSource;
-  console.log('==============>\nRequest:\n', params, sql, '\n<==============\n');
   ds.connector.query(sql, [], function(err, rows) {
     if (err) {
-      console.error(err);
+      console.error('==============>\nRequest Error:\n', err, params, sql, '\n<==============\n');
       cb(err, []);
     } else {
       console.log('==============>\nResponse:\n', params, sql, `${rows.length} rows`, '\n<==============\n');
@@ -917,7 +864,17 @@ function runQuery(cdm, cb, sql, params) {
 }
 function toNamedParams(p, accepts) {
   let params = {};
-  accepts.forEach(arg => params[arg.arg] = p.shift());
+  accepts.forEach(arg => {
+    let val = p.shift();
+    if (typeof val === 'undefined')
+      val = arg.default;
+    if (arg.validCheck) {
+      if (! arg.validCheck(val)) {
+        throw new Error(`invalid value: ${val} for ${JSON.stringify(arg,null,2)}`);
+      }
+    }
+    params[arg.arg] = val;
+  })
   return params;
 }
 
@@ -969,168 +926,6 @@ cdm.remoteMethod('conceptsPost', {
 }
 */
 /*
-function drugConceptsOLD(cdm) {
-  /*
-   *  frustrating that this stuff is largely redundant with the non-drug-specific
-   *  versions in 'concepts', but the drug prep tables only get counts from the
-   *  drug_exposure table and take source codes into account, and are a lot smaller
-   *  that the generic stuff in concept_id_occurrence
-   *
-   *  i should figure out how to merge this stuff into the generic version, but
-   *  didn't want to waste time on that... now it's a bit of a mess
-   * /
-  var returns = { arg: 'data', type: ['cdm'], root: true };
-  const schemaArgs = [
-    {arg: 'cdmSchema', type: 'string', required: true },
-    {arg: 'resultsSchema', type: 'string', required: true},
-  ];
-  const filterArgs = [
-    {arg: 'excludeInvalidConcepts', type: 'boolean', required: false, default: true},
-    {arg: 'excludeNoMatchingConcepts', type: 'boolean', required: false, default: true},
-    {arg: 'excludeNonStandardConcepts', type: 'boolean', required: false, default: false},
-    {arg: 'includeFiltersOnly', type: 'boolean', required: false, default: false},
-    {arg: 'includeInvalidConcepts', type: 'boolean', required: false, default: true},
-    {arg: 'includeNoMatchingConcepts', type: 'boolean', required: false, default: true},
-    {arg: 'includeNonStandardConcepts', type: 'boolean', required: false, default: false},
-  ];
-  const otherArgs = [
-    {arg: 'queryName', type: 'string', required: false, default: 'All concept stats'},
-  ];
-  var accepts = [].concat(schemaArgs, filterArgs, otherArgs);
-
-  function filterConditions(params) {
-    const { cdmSchema, resultsSchema, 
-            excludeInvalidConcepts, excludeNoMatchingConcepts, excludeNonStandardConcepts,
-            includeFiltersOnly,
-            includeInvalidConcepts, includeNoMatchingConcepts, includeNonStandardConcepts,
-          } = params;
-    let filters = [];
-    if (includeFiltersOnly) {
-      let ors = [];
-      if (includeInvalidConcepts) ors.push('c.invalid_reason is not null');
-      if (includeNoMatchingConcepts) ors.push('c.concept_id = 0');
-      if (includeNonStandardConcepts) ors.push('c.standard_concept is null');
-      ors.length && filters.push(orItems(ors));
-    } else {
-      let ands = [];
-      if (excludeInvalidConcepts) ands.push('c.invalid_reason is null');
-      if (excludeNoMatchingConcepts) ands.push('c.concept_id != 0');
-      if (excludeNonStandardConcepts) ands.push('c.standard_concept is not null');
-      ands.length && filters.push(andItems(ands));
-    }
-    return filters;
-  }
-  function drugConceptSql(params, flavor) {
-    let filters = filterConditions(params);
-    let cols =  `
-                  coalesce(sum(dcc.count),0) AS exposure_count,
-                  count(*) AS concept_count
-                `;
-    let groupBy = '';
-    switch (flavor) {
-      case 'counts':
-        break;  // just the counts
-      case 'target':
-        cols = `
-                  c.concept_name AS concept_name,
-                  ct.concept_name AS type_concept_name,
-                  c.invalid_reason, 
-                  c.standard_concept, 
-                  c.domain_id, 
-                  c.vocabulary_id, 
-                  c.concept_class_id,
-                  dcc.drug_concept_id AS concept_id,
-                  dcc.drug_type_concept_id AS type_concept_id,
-                ` + cols;
-        break;
-      case 'source':
-        throw new Error("not handling yet");
-      case 'target_agg':
-        cols = `
-                  ct.concept_name AS type_concept_name,
-                  c.invalid_reason, 
-                  c.standard_concept, 
-                  c.domain_id, 
-                  c.vocabulary_id, 
-                  c.concept_class_id,
-                ` + cols;
-        groupBy = `
-                group by ${_.range(1, 7)}
-                  `;
-        break;
-    }
-    let sql = `
-          SELECT  ${cols}
-          FROM ${params.resultsSchema}.drug_concept_counts dcc
-          JOIN ${params.cdmSchema}.concept c ON dcc.drug_concept_id = c.concept_id
-          JOIN ${params.cdmSchema}.concept ct on dcc.drug_type_concept_id = ct.concept_id and ct.invalid_reason is null
-          ${where(filters)}
-          ${groupBy}
-        `;
-    return sql;
-  }
-
-  cdm.drugConceptAgg = function(..._params) {
-    var accepts = [].concat(schemaArgs, filterArgs, otherArgs);
-    const cb = _params.pop();
-    let params = toNamedParams(_params, accepts);
-    let sql = drugConceptSql(params, 'target_agg');
-    runQuery(cdm, cb, sql, params);
-  };
-  cdm.remoteMethod('drugConceptAgg', { accepts, returns, accessType: 'READ', http: { verb: 'post' } });
-  cdm.remoteMethod('drugConceptAgg', { accepts, returns, accessType: 'READ', http: { verb: 'get' } });
-
-  cdm.drugConceptCounts = function(..._params) {
-    var accepts = [].concat(schemaArgs, filterArgs, otherArgs);
-    const cb = _params.pop();
-    let params = toNamedParams(_params, accepts);
-    let sql = drugConceptSql(params, 'counts');
-    runQuery(cdm, cb, sql, params);
-  };
-  cdm.remoteMethod('drugConceptCounts', { accepts, returns, accessType: 'READ', http: { verb: 'post' } });
-  cdm.remoteMethod('drugConceptCounts', { accepts, returns, accessType: 'READ', http: { verb: 'get' } });
-
-
-
-  let classAccepts = accepts.slice(0).concat({arg: 'domain_id', type: 'string', required: false });
-  cdm.classRelations = function(..._params) {
-    var accepts = [].concat(schemaArgs, filterArgs, otherArgs);
-    const cb = _params.pop();
-    let params = toNamedParams(_params, classAccepts);
-    let domainFilt = '';
-    if (params.domain_id &&
-       ['Drug','Condition'].indexOf(params.domain_id) > -1) {
-      domainFilt = ` and domain_id_1='${params.domain_id}' and domain_id_2='${params.domain_id}' `;
-    }
-    let sql = `
-                select
-                        is_hierarchical,
-                        defines_ancestry,
-                        same_vocab,
-                        sc_1,
-                        sc_2,
-                        vocab_1,
-                        vocab_2,
-                        class_1,
-                        class_2,
-                        relationship_id,
-                        sum(c1_ids) c1_ids,
-                        sum(c2_ids) c2_ids,
-                        sum(c) c
-                from ${params.resultsSchema}.class_relations
-                where invalid_1=false and invalid_2=false
-                  and (is_hierarchical = '1' and defines_ancestry = '1')
-                  /*and (is_hierarchical = '1' or defines_ancestry = '1')* /
-                  /*and defines_ancestry = '1'* /
-                  ${domainFilt}
-                group by 1,2,3,4,5,6,7,8,9,10
-                order by 1,2,3,4,5,6,7,8,9,10
-              `;
-    runQuery(cdm, cb, sql, params);
-  };
-  cdm.remoteMethod('classRelations', { accepts:classAccepts, returns, accessType: 'READ', http: { verb: 'post' } });
-  cdm.remoteMethod('classRelations', { accepts:classAccepts, returns, accessType: 'READ', http: { verb: 'get' } });
-}
 function conceptsOLD(cdm) {
   var returns = { arg: 'data', type: ['cdm'], root: true };
 

@@ -22,6 +22,11 @@ app.start = function() {
     app.use('/explorer', explorer.routes(app, options));
     //var explorerPath = app.get('loopback-component-explorer').mountPath;
     console.log('Browse your REST API at %s%s', baseUrl, '/explorer');
+
+    app.use(function(req, res, next) {
+      console.log('request', baseUrl + req.url);
+      next();
+    });
   });
 };
 
