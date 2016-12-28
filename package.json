@@ -15,10 +15,11 @@
     "lodash": "^4.16.6",
     "loopback": "^3.0.0",
     "loopback-boot": "^2.6.5",
-    "loopback-component-explorer": "^2.4.0",
+    "loopback-component-explorer": "^2.7.0",
     "loopback-connector-datastore": "^0.3.10",
     "loopback-connector-postgresql": "^2.7.0",
     "loopback-connector-rest": "^2.1.0",
+    "loopback-explorer": "^2.0.2",
     "serve-favicon": "^2.0.1",
     "strong-error-handler": "^1.0.1"
   },

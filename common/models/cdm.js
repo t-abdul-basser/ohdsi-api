@@ -1,44 +1,325 @@
 //var loopback = require('loopback');
+var _ = require('lodash');
 
-module.exports = function(cdm){
+module.exports = function(cdm) {
+  concepts(cdm);
+  sampleUsers(cdm);
+  cacheDirty(cdm);
+  //drugConcepts(cdm);
 
+  //exposureQueries(cdm); // code is still here but not being used (yet) in this project
+}
+function concepts(cdm) { // consolidating?
+  /*
+  { cdmSchema: 'cdm2',
+    resultsSchema: 'results2',
+    excludeInvalidConcepts: undefined,
+    excludeNoMatchingConcepts: undefined,
+    excludeNonStandardConcepts: undefined,
+    includeFiltersOnly: true,
+    includeInvalidConcepts: true,
+    includeNoMatchingConcepts: undefined,
+    includeNonStandardConcepts: undefined,
+    queryName: 'Invalid' }
+          SELECT
+                  coalesce(sum(dcc.count),0) AS exposure_count,
+                  count(*) AS concept_count
+
+          FROM results2.drug_concept_counts dcc
+          JOIN cdm2.concept c ON dcc.drug_concept_id = c.concept_id
+          JOIN cdm2.concept ct on dcc.drug_type_concept_id = ct.concept_id and ct.invalid_reason is null
+           where  (c.invalid_reason is not null)
+         1 rows
+
+  { cdmSchema: 'cdm2',
+    resultsSchema: 'results2',
+    excludeInvalidConcepts: false,
+    excludeNoMatchingConcepts: true,
+    excludeNonStandardConcepts: true,
+    includeFiltersOnly: undefined,
+    includeInvalidConcepts: undefined,
+    includeNoMatchingConcepts: undefined,
+    includeNonStandardConcepts: undefined,
+    queryName: 'With current filters' }
+          SELECT
+                  coalesce(sum(dcc.count),0) AS exposure_count,
+                  count(*) AS concept_count
+
+          FROM results2.drug_concept_counts dcc
+          JOIN cdm2.concept c ON dcc.drug_concept_id = c.concept_id
+          JOIN cdm2.concept ct on dcc.drug_type_concept_id = ct.concept_id and ct.invalid_reason is null
+           where  (c.concept_id != 0 and c.standard_concept is not null)
+         1 rows
+
+  { cdmSchema: 'cdm2',
+    resultsSchema: 'results2',
+    excludeInvalidConcepts: false,
+    excludeNoMatchingConcepts: true,
+    excludeNonStandardConcepts: true,
+    includeFiltersOnly: undefined,
+    includeInvalidConcepts: undefined,
+    includeNoMatchingConcepts: undefined,
+    includeNonStandardConcepts: undefined,
+    queryName: 'drugagg' }
+          SELECT
+                  ct.concept_name AS type_concept_name,
+                  c.invalid_reason,
+                  c.standard_concept,
+                  c.domain_id,
+                  c.vocabulary_id,
+                  c.concept_class_id,
+
+                  coalesce(sum(dcc.count),0) AS exposure_count,
+                  count(*) AS concept_count
+
+          FROM results2.drug_concept_counts dcc
+          JOIN cdm2.concept c ON dcc.drug_concept_id = c.concept_id
+          JOIN cdm2.concept ct on dcc.drug_type_concept_id = ct.concept_id and ct.invalid_reason is null
+           where  (c.concept_id != 0 and c.standard_concept is not null)
+
+                group by 1,2,3,4,5,6
+
+         12 rows
+  */
+  var returns = { arg: 'data', type: ['cdm'], root: true };
+  const schemaArgs = [
+    {arg: 'cdmSchema', type: 'string', required: true },
+    {arg: 'resultsSchema', type: 'string', required: true},
+  ];
+  const filterArgs = [
+    {arg: 'excludeInvalidConcepts', type: 'boolean', required: false, default: true},
+    {arg: 'excludeNoMatchingConcepts', type: 'boolean', required: false, default: true},
+    {arg: 'excludeNonStandardConcepts', type: 'boolean', required: false, default: false},
+    {arg: 'includeFiltersOnly', type: 'boolean', required: false, default: false},
+    {arg: 'includeInvalidConcepts', type: 'boolean', required: false, default: true},
+    {arg: 'includeNoMatchingConcepts', type: 'boolean', required: false, default: true},
+    {arg: 'includeNonStandardConcepts', type: 'boolean', required: false, default: false},
+    {arg: 'domain_id', type: 'string', required: false },
+  ];
+  const otherArgs = [
+    {arg: 'queryName', type: 'string', required: false, default: 'All concept stats'},
+  ];
+  var accepts = [].concat(schemaArgs, filterArgs, otherArgs);
+
+  function filterConditions(params) {
+    let filters = [];
+    if (params.includeFiltersOnly) {
+      let ors = [];
+      if (params.includeInvalidConcepts) ors.push('c.invalid_reason is not null');
+      if (params.includeNoMatchingConcepts) ors.push('c.concept_id = 0');
+      if (params.includeNonStandardConcepts) ors.push('c.standard_concept is null');
+      ors.length && filters.push(orItems(ors));
+    } else {
+      let ands = [];
+      if (params.excludeInvalidConcepts) ands.push('c.invalid_reason is null');
+      if (params.excludeNoMatchingConcepts) ands.push('c.concept_id != 0');
+      if (params.excludeNonStandardConcepts) ands.push('c.standard_concept is not null');
+      ands.length && filters.push(andItems(ands));
+    }
+    return filters;
+  }
+  function conceptSql(params, flavor) {
+    let filters = filterConditions(params);
+    let cols =  `
+                  coalesce(sum(cio.count),0) AS exposure_count,
+                  count(*) AS concept_count
+                `;
+    let groupBy = '';
+    switch (flavor) {
+      case 'counts':
+        break;  // just the counts
+      case 'target':
+        cols = `
+                  c.concept_name AS concept_name,
+                  ct.concept_name AS type_concept_name,
+                  c.invalid_reason, 
+                  c.standard_concept, 
+                  c.domain_id, 
+                  c.vocabulary_id, 
+                  c.concept_class_id,
+                  cio.concept_id AS concept_id,
+                  cio.type_concept_id AS type_concept_id,
+                ` + cols;
+        break;
+      case 'source':
+        throw new Error("not handling yet");
+      case 'target_agg':
+        cols = `
+                  ct.concept_name AS type_concept_name,
+                  c.invalid_reason, 
+                  c.standard_concept, 
+                  c.domain_id, 
+                  c.vocabulary_id, 
+                  c.concept_class_id,
+                ` + cols;
+        groupBy = `
+                group by ${_.range(1, 7)}
+                  `;
+        break;
+    }
+    let sql = `
+          SELECT  ${cols}
+          FROM ${params.resultsSchema}.concept_id_occurrence cio
+          JOIN ${params.cdmSchema}.concept c ON cio.concept_id = c.concept_id
+          JOIN ${params.cdmSchema}.concept ct on cio.type_concept_id = ct.concept_id and ct.invalid_reason is null
+          ${where(filters)}
+          ${groupBy}
+        `;
+    return sql;
+    switch (query) {
+      case 'conceptStats':
+        if (attr) {
+          if (excludeInvalidConcepts) filters.push('invalid_reason is null');
+          if (excludeNoMatchingConcepts) filters.push('concept_id != 0');
+          if (excludeNonStandardConcepts) filters.push('standard_concept is not null');
+          sql = `
+                  select ${attr}, sum(count) as dbrecs, count(*) as conceptrecs
+                  from ${resultsSchema}.concept_info
+                  ${where(filters)}
+                  group by 1`;
+        } else {
+          if (excludeInvalidConcepts) filters.push('invalid = false');
+          if (excludeNoMatchingConcepts) filters.push(`vocabulary_id != 'None'`);
+          if (excludeNonStandardConcepts) filters.push('sc is not null');
+          sql = `
+                  select *
+                  from ${resultsSchema}.concept_info_stats
+                  ${where(filters)}
+                `;
+        }
+        break;
+      case 'conceptCount':
+        if (excludeInvalidConcepts) filters.push('invalid_reason is null');
+        if (excludeNoMatchingConcepts) filters.push('concept_id != 0');
+        if (excludeNonStandardConcepts) filters.push('standard_concept is not null');
+        sql = `
+                select count(*) as count
+                from ${cdmSchema}.concept
+                ${where(filters)}
+              `;
+        break;
+      case 'classRelations':
+        if (excludeInvalidConcepts) filters.push(`invalid_1 = false`, `invalid_2 = false`);
+        if (excludeNoMatchingConcepts) filters.push(`vocab_1 != 'None'`, `vocab_2 != 'None'`);
+        if (excludeNonStandardConcepts) filters.push('sc_1 is not null', 'sc_2 is not null');
+        sql =  `
+                select * 
+                from ${resultsSchema}.class_relations 
+                ${where(filters)}
+                order by 1,2,5,6,11,8,9,10,16,13,14,15`;
+    }
+  }
+
+  let classAccepts = accepts.slice(0).concat({arg: 'domain_id', type: 'string', required: false });
+  cdm.classRelations = function(..._params) {
+    var accepts = [].concat(schemaArgs, filterArgs, otherArgs);
+    const cb = _params.pop();
+    let params = toNamedParams(_params, classAccepts);
+    let domainFilt = '';
+    if (params.domain_id &&
+       ['Drug','Condition'].indexOf(params.domain_id) > -1) {
+      domainFilt = ` and domain_id_1='${params.domain_id}' and domain_id_2='${params.domain_id}' `;
+    }
+    let sql = `
+                select
+                        is_hierarchical,
+                        defines_ancestry,
+                        same_vocab,
+                        sc_1,
+                        sc_2,
+                        vocab_1,
+                        vocab_2,
+                        class_1,
+                        class_2,
+                        relationship_id,
+                        sum(c1_ids) c1_ids,
+                        sum(c2_ids) c2_ids,
+                        sum(c) c
+                from ${params.resultsSchema}.class_relations
+                where invalid_1=false and invalid_2=false
+                  and (is_hierarchical = '1' and defines_ancestry = '1')
+                  /*and (is_hierarchical = '1' or defines_ancestry = '1')*/
+                  /*and defines_ancestry = '1'*/
+                  ${domainFilt}
+                group by 1,2,3,4,5,6,7,8,9,10
+                order by 1,2,3,4,5,6,7,8,9,10
+              `;
+    runQuery(cdm, cb, sql, params);
+  };
+  cdm.remoteMethod('classRelations', { accepts:classAccepts, returns, accessType: 'READ', http: { verb: 'post' } });
+  cdm.remoteMethod('classRelations', { accepts:classAccepts, returns, accessType: 'READ', http: { verb: 'get' } });
   var returns = { arg: 'data', type: ['cdm'], root: true };
 
-  cdm.conceptsGet = cdm.conceptsPost = 
-    function(cdmSchema, resultsSchema, attr, query,
-             queryName, cb) {
+  const where = (filters) => filters.length
+                              ? ` where ${filters.join(' and ')} `
+                              : '';
+
+  cdm.concepts = 
+    function(cdmSchema, resultsSchema, attr, 
+             excludeInvalidConcepts, excludeNoMatchingConcepts, excludeNonStandardConcepts,
+             query, queryName, cb) {
       var ds = cdm.dataSource;
-      let allParams = 
-        {cdmSchema, resultsSchema, queryName};
+      let allParams = {
+            cdmSchema, resultsSchema, 
+            excludeInvalidConcepts, excludeNoMatchingConcepts, excludeNonStandardConcepts,
+            query, queryName,
+      }
 
       let sql = '';
       query = query || queryName;
+      let filters = [];
       switch (query) {
         case 'conceptStats':
           if (attr) {
-            sql = `select ${attr}, sum(count) as dbrecs, count(*) as conceptrecs
+            if (excludeInvalidConcepts) filters.push('invalid_reason is null');
+            if (excludeNoMatchingConcepts) filters.push('concept_id != 0');
+            if (excludeNonStandardConcepts) filters.push('standard_concept is not null');
+            sql = `
+                    select ${attr}, sum(count) as dbrecs, count(*) as conceptrecs
                     from ${resultsSchema}.concept_info
+                    ${where(filters)}
                     group by 1`;
           } else {
-            sql = `select *
-                  from ${resultsSchema}.concept_info_stats`;
+            if (excludeInvalidConcepts) filters.push('invalid = false');
+            if (excludeNoMatchingConcepts) filters.push(`vocabulary_id != 'None'`);
+            if (excludeNonStandardConcepts) filters.push('sc is not null');
+            sql = `
+                    select *
+                    from ${resultsSchema}.concept_info_stats
+                    ${where(filters)}
+                  `;
           }
           break;
         case 'conceptCount':
-          sql = `select count(*) from ${cdmSchema}.concept`;
+          if (excludeInvalidConcepts) filters.push('invalid_reason is null');
+          if (excludeNoMatchingConcepts) filters.push('concept_id != 0');
+          if (excludeNonStandardConcepts) filters.push('standard_concept is not null');
+          sql = `
+                  select count(*) as count
+                  from ${cdmSchema}.concept
+                  ${where(filters)}
+                `;
           break;
         case 'classRelations':
-          sql =  `select * 
+          if (excludeInvalidConcepts) filters.push(`invalid_1 = false`, `invalid_2 = false`);
+          if (excludeNoMatchingConcepts) filters.push(`vocab_1 != 'None'`, `vocab_2 != 'None'`);
+          if (excludeNonStandardConcepts) filters.push('sc_1 is not null', 'sc_2 is not null');
+          sql =  `
+                  select * 
                   from ${resultsSchema}.class_relations 
-                  where invalid_1 = 'f' 
-                    and invalid_2 = 'f' 
+                  ${where(filters)}
                   order by 1,2,5,6,11,8,9,10,16,13,14,15`;
       }
-      console.log('==============>\n', allParams, sql, '\n<==============\n');
+      console.log('==============>\nRequest:\n', allParams, sql, '\n<==============\n');
       ds.connector.query(sql, [], function(err, rows) {
-        if (err) console.error(err);
-        //console.log(Object.keys(rows));
-        cb(err, rows.slice(0,1000));
+        if (err) {
+          console.error(err);
+          cb(err, []);
+        } else {
+          console.log('==============>\nResponse:\n', allParams, sql, `${rows.length} rows`, '\n<==============\n');
+          console.warn("TRUNCATING TO 1000 ROWS!!! FIX THIS (with pagination?)!!!");
+          cb(err, rows.slice(0,1000));
+        }
       });
     };
 
@@ -46,12 +327,15 @@ module.exports = function(cdm){
       {arg: 'cdmSchema', type: 'string', required: true },
       {arg: 'resultsSchema', type: 'string', required: true},
       {arg: 'attr', type: 'string', required: false},
+      {arg: 'excludeInvalidConcepts', type: 'boolean', required: false, default: true},
+      {arg: 'excludeNoMatchingConcepts', type: 'boolean', required: false, default: true},
+      {arg: 'excludeNonStandardConcepts', type: 'boolean', required: false, default: false},
       //{arg: 'fullInfo', type: 'boolean', required: false, default: false},
-      {arg: 'query', type: 'string', required: false},
+      {arg: 'query', type: 'string', required: true},
       {arg: 'queryName', type: 'string', required: false, default: 'All concept stats'},
   ];
 
-  cdm.remoteMethod('conceptsGet', {
+  cdm.remoteMethod('concepts', {
     accepts: conceptsAccepts,
     returns,
     accessType: 'READ',
@@ -59,15 +343,13 @@ module.exports = function(cdm){
       verb: 'get'
     }
   });
-  cdm.remoteMethod('conceptsPost', {
+  cdm.remoteMethod('concepts', {
     accepts: conceptsAccepts,
     returns,
   });
-
-
-
-
-
+}
+function sampleUsers(cdm) {
+  var returns = { arg: 'data', type: ['cdm'], root: true };
   cdm.sampleUsersGet = cdm.sampleUsersPost = 
     function(cdmSchema, resultsSchema, concept_id, sampleCnt, 
              measurename, bundle, entityName, maxgap, from, to, queryName, cb) {
@@ -201,7 +483,9 @@ module.exports = function(cdm){
     accepts: sampleUsersAccepts,
     returns,
   });
-
+}
+function exposureQueries(cdm) {
+  var returns = { arg: 'data', type: ['cdm'], root: true };
   cdm.sqlget = cdm.sqlpost = 
     function(aggregate, bundle, cdmSchema, resultsSchema, concept_id, person_id, 
              maxgap, ntiles, measurename, limit=2000, noLimit, queryName, cb) {
@@ -305,316 +589,625 @@ module.exports = function(cdm){
     accepts,
     returns,
   });
-  function resolveParams(sql, params) {
-    // doing this this way so I can use real sql parameterization later
-    //console.log(sql, params);
-    return  sql.replace(/@(\w+)/g, function(match, token) {
-              return params[token];
-            });
-  }
-  function ntileCol(p, whereArr) {
-    // may modify whereArr
-    let {ntiles, measurename, bundle, entityName} = p;
+}
+function resolveParams(sql, params) {
+  // doing this this way so I can use real sql parameterization later
+  //console.log(sql, params);
+  return  sql.replace(/@(\w+)/g, function(match, token) {
+            return params[token];
+          });
+}
+function ntileCol(p, whereArr) {
+  // may modify whereArr
+  let {ntiles, measurename, bundle, entityName} = p;
 
-    if (typeof ntiles === 'undefined' || typeof measurename === 'undefined')
-      return '';
+  if (typeof ntiles === 'undefined' || typeof measurename === 'undefined')
+    return '';
 
-    let partition = ({
-        exp: 'partition by exp_num', 
-        era: 'partition by era_num', 
-        allexp: '',
-        allera: '',
-    })[bundle];
+  let partition = ({
+      exp: 'partition by exp_num', 
+      era: 'partition by era_num', 
+      allexp: '',
+      allera: '',
+  })[bundle];
 
-    let order = ({
-      duration: {
-        exp: 'days_supply', 
-        allexp: 'days_supply', 
-        era: 'total_days_supply', 
-        allera: 'total_days_supply', 
-      },
-      gap: {
-        exp: 'days_from_latest', 
-        allexp: 'days_from_latest', 
-        era: 'btn_era_gap_days', 
-        allera: 'btn_era_gap_days', 
-      },
-      overlap: {
-        exp: 'exp_overlap_days', 
-        allexp: 'exp_overlap_days', 
-        era: 'NO_ERA_OVERLAP',
-        allera: 'NO_ERA_OVERLAP',
-      },
-    })[measurename][bundle];
+  let order = ({
+    duration: {
+      exp: 'days_supply', 
+      allexp: 'days_supply', 
+      era: 'total_days_supply', 
+      allera: 'total_days_supply', 
+    },
+    gap: {
+      exp: 'days_from_latest', 
+      allexp: 'days_from_latest', 
+      era: 'btn_era_gap_days', 
+      allera: 'btn_era_gap_days', 
+    },
+    overlap: {
+      exp: 'exp_overlap_days', 
+      allexp: 'exp_overlap_days', 
+      era: 'NO_ERA_OVERLAP',
+      allera: 'NO_ERA_OVERLAP',
+    },
+  })[measurename][bundle];
 
-    if (measurename === 'gap' || measurename === 'overlap') {
-      if (bundle === 'exp')
-        whereArr.push(`exp_num > 1`);
-      //if (bundle === 'allexp') whereArr.push(`exp_num > 1`); shouldn't matter
-      if (bundle === 'era')
-        whereArr.push(`era_num > 1`);
-    }
-
-    sql = `
-                                      /* ntileCol */
-                                      ntile(@ntiles) over (${partition} order by ${order}) ntile, `;
-    return sql;
-  }
-  function exposure_rollup(p, parameterize) {
-    let {resultsSchema, concept_id, person_id, ntiles, 
-          measurename, bundle, entityName, drugName} = p;
-    let where = [];
-    if (typeof concept_id !== 'undefined') {
-      where.push(`rollup_concept_id = @concept_id`);
-    }
-    if (typeof person_id !== 'undefined') {
-      where.push(`person_id = @person_id`);
-    }
-
-    let ntilecol =
-          (typeof ntiles === 'undefined' || typeof measurename === 'undefined')
-          ? ''
-          : ntileCol({ntiles, measurename, bundle, entityName}, where);
-
-    let whereClause = '';
-    if (where.length) {
-      whereClause = `where ${where.join(' and ')}`;
-    }
-    let sql = `
-                              select 
-                                      drug_exposure_start_date -
-                                        first_value(drug_exposure_start_date) 
-                                          over (order by exp_num)
-                                        as days_from_first,
-                                      case when days_from_latest > 0 
-                                          then days_from_latest else 0 end as exp_gap_days,
-                                     case when days_from_latest < 0 
-                                          then
-                                              case when -days_from_latest > days_supply 
-                                                   then days_supply
-                                                   else -days_from_latest
-                                              end
-                                          else 0 
-                                     end as exp_overlap_days,
-                                     d.*
-                                     ${drugName ? ',c.concept_name as drug_name' : ''}
-                              from ${resultsSchema}.drug_exposure_rollup d
-                              ${
-                                  drugName ?
-                                    'join omop5_synpuf_5pcnt.concept c on d.drug_concept_id = c.concept_id'
-                                    : ''
-                              }
-                              ${whereClause}
-                              `;
-    if (ntilecol) {
-      sql = `
-                              select ${ntilecol}
-                                      er_no_ntile.*
-                              from (${sql}
-                              ) er_no_ntile `;
-    }
-    sql = `
-                              /* exposure_rollup(${JSON.stringify(p)}) */
-                              ${sql}`;
-
-    return sql;
-  }
-  function ntileCross(sql, p, parameterize) {
-    let {resultsSchema, concept_id, person_id,
-              ntiles, measurename, bundle, entityName} = p;
-
-    let aggs = {
-      exp:    { duration: 'days_supply',        gap: 'days_from_latest', overlap: 'exp_overlap_days' },
-      allexp: { duration: 'days_supply',        gap: 'days_from_latest', overlap: 'exp_overlap_days' },
-      era:    { duration: 'total_days_supply',  gap: 'btn_era_gap_days' },
-      allera: { duration: 'total_days_supply',  gap: 'btn_era_gap_days' },
-    };
-    let agg = aggs[bundle][measurename];
-
-    let first_exp = ({duration: 1, gap: 2, overlap: 2})[measurename];
-
-    let bundleCol = ({ exp: 'exp_num', era: 'era_num', allexp: null, allera: null })[bundle];
-
-    if (!bundleCol) { // intentional weird indenting here so sql indenting comes
-                      // out readable
-      let crossNums = `
-        /* ntileCross crossNums cn */
-        select generate_series as cn_ntile
-        from generate_series(1,@ntiles)
-        `;
-      let withEmptyNtiles = `
-      /* ntileCross withEmptyNtiles wen */
-      select cn.*, dern.*
-      from (${crossNums}
-      ) cn
-      left outer join (${sql}) dern
-        on cn.cn_ntile = dern.ntile `;
-      sql = `
-    /* ntileCross(${JSON.stringify(p)}) */
-    select  '${agg}' as aggField,
-            '${measurename}' as measurename,
-            cn_ntile as ntile,
-            count(${agg}) as count,
-            min(${agg}), max(${agg}), avg(${agg})
-    from (${withEmptyNtiles}
-    ) wen
-    group by 1,2,3
-    order by 2,3 `;
-      return sql;
-    }
-    let max_exp = `
-          /* ntileCross max_exp */
-          select max(${bundleCol}) 
-          from (${sql}
-          ) s `;
-    let crossNums = `
-        /* ntileCross crossNums cn */
-        select generate_series as cn_${bundleCol}, b.ntile as cn_ntile
-        from generate_series(${first_exp}, (${max_exp}
-        ))
-        join (select generate_series as ntile 
-              from generate_series(1,@ntiles)) b on 1=1
-        `;
-    let withEmptyNtiles = `
-      /* ntileCross withEmptyNtiles wen */
-      select cn.*, dern.*
-      from (${crossNums}
-      ) cn
-      left outer join (${sql}) dern
-        on cn.cn_ntile = dern.ntile and cn.cn_${bundleCol} = dern.${bundleCol} `;
-    sql = `
-    /* ntileCross(${JSON.stringify(p)}) */
-    select  '${agg}' as aggField,
-            '${measurename}' as measurename,
-            cn_${bundleCol} as ${bundleCol},
-            cn_ntile as ntile,
-            count(${bundleCol}) as count,
-            min(${agg}), max(${agg}), avg(${agg})
-    from (${withEmptyNtiles}
-    ) wen
-    group by 1,2,3,4
-    order by 3,4 `;
-    return sql;
+  if (measurename === 'gap' || measurename === 'overlap') {
+    if (bundle === 'exp')
+      whereArr.push(`exp_num > 1`);
+    //if (bundle === 'allexp') whereArr.push(`exp_num > 1`); shouldn't matter
+    if (bundle === 'era')
+      whereArr.push(`era_num > 1`);
   }
 
-  function plainEras(p) {
-    let {resultsSchema, maxgap, concept_id, person_id, ntiles, measurename, bundle, filter} = p;
-    return `
-              /* plainEras(${JSON.stringify(p)}) */
-              select
-                      person_id,
-                      era_num,
-                      count(*) as exposures,
-                      min(era_days) as era_days, /* same in every value, so min,max,avg, doesn't matter */
-                      /*max(drug_exposure_end) - min(drug_exposure_start_date) as era_days, */
-                      sum(days_supply) as total_days_supply,
-                      min(btn_era_gap_days) as btn_era_gap_days,
-                      min(from_exp) as from_exp,
-                      min(to_exp) as to_exp,
-                      min(era_start_date) as era_start_date,
-                      min(era_end_date) as era_end_date,
-                      min(days_from_first_era) as days_from_first_era,
-                      rollup_concept_id
-              from (
-                ${expPlusEraStats(p)}
-              ) exp_w_era_stats
-              ${filter||''}
-              group by person_id, rollup_concept_id, era_num
+  sql = `
+                                    /* ntileCol */
+                                    ntile(@ntiles) over (${partition} order by ${order}) ntile, `;
+  return sql;
+}
+function exposure_rollup(p, parameterize) {
+  let {resultsSchema, concept_id, person_id, ntiles, 
+        measurename, bundle, entityName, drugName} = p;
+  let where = [];
+  if (typeof concept_id !== 'undefined') {
+    where.push(`rollup_concept_id = @concept_id`);
+  }
+  if (typeof person_id !== 'undefined') {
+    where.push(`person_id = @person_id`);
+  }
+
+  let ntilecol =
+        (typeof ntiles === 'undefined' || typeof measurename === 'undefined')
+        ? ''
+        : ntileCol({ntiles, measurename, bundle, entityName}, where);
+
+  let whereClause = '';
+  if (where.length) {
+    whereClause = `where ${where.join(' and ')}`;
+  }
+  let sql = `
+                            select 
+                                    drug_exposure_start_date -
+                                      first_value(drug_exposure_start_date) 
+                                        over (order by exp_num)
+                                      as days_from_first,
+                                    case when days_from_latest > 0 
+                                        then days_from_latest else 0 end as exp_gap_days,
+                                    case when days_from_latest < 0 
+                                        then
+                                            case when -days_from_latest > days_supply 
+                                                  then days_supply
+                                                  else -days_from_latest
+                                            end
+                                        else 0 
+                                    end as exp_overlap_days,
+                                    d.*
+                                    ${drugName ? ',c.concept_name as drug_name' : ''}
+                            from ${resultsSchema}.drug_exposure_rollup d
+                            ${
+                                drugName ?
+                                  'join omop5_synpuf_5pcnt.concept c on d.drug_concept_id = c.concept_id'
+                                  : ''
+                            }
+                            ${whereClause}
                             `;
+  if (ntilecol) {
+    sql = `
+                            select ${ntilecol}
+                                    er_no_ntile.*
+                            from (${sql}
+                            ) er_no_ntile `;
   }
-  function expPlusEraStats(p) {
-    return `
-                  /* expPlusEraStats(${JSON.stringify(p)}) */
-                  select
-                          max(drug_exposure_end) over (partition by person_id, era_num) - min(drug_exposure_start_date) over (partition by person_id, era_num) as era_days,
-                          first_value(days_from_latest) over (partition by person_id, era_num order by exp_num) as btn_era_gap_days,
-                          min(exp_num) over (partition by person_id, era_num) from_exp,
-                          max(exp_num) over (partition by person_id, era_num) to_exp,
-                          first_value(drug_exposure_start_date) over (partition by person_id, era_num order by exp_num) era_start_date,
-                          last_value(drug_exposure_end) over (partition by person_id, era_num order by exp_num) era_end_date,
-                          first_value(drug_exposure_start_date) over (partition by person_id, era_num order by exp_num) -
-                          first_value(drug_exposure_start_date) over (partition by person_id order by exp_num) as days_from_first_era,
-                          exp_w_era_num.*
-                  from ( ${expPlusEraNum(p)}
-                  ) exp_w_era_num `;
+  sql = `
+                            /* exposure_rollup(${JSON.stringify(p)}) */
+                            ${sql}`;
+
+  return sql;
+}
+function ntileCross(sql, p, parameterize) {
+  let {resultsSchema, concept_id, person_id,
+            ntiles, measurename, bundle, entityName} = p;
+
+  let aggs = {
+    exp:    { duration: 'days_supply',        gap: 'days_from_latest', overlap: 'exp_overlap_days' },
+    allexp: { duration: 'days_supply',        gap: 'days_from_latest', overlap: 'exp_overlap_days' },
+    era:    { duration: 'total_days_supply',  gap: 'btn_era_gap_days' },
+    allera: { duration: 'total_days_supply',  gap: 'btn_era_gap_days' },
+  };
+  let agg = aggs[bundle][measurename];
+
+  let first_exp = ({duration: 1, gap: 2, overlap: 2})[measurename];
+
+  let bundleCol = ({ exp: 'exp_num', era: 'era_num', allexp: null, allera: null })[bundle];
+
+  if (!bundleCol) { // intentional weird indenting here so sql indenting comes
+                    // out readable
+    let crossNums = `
+      /* ntileCross crossNums cn */
+      select generate_series as cn_ntile
+      from generate_series(1,@ntiles)
+      `;
+    let withEmptyNtiles = `
+    /* ntileCross withEmptyNtiles wen */
+    select cn.*, dern.*
+    from (${crossNums}
+    ) cn
+    left outer join (${sql}) dern
+      on cn.cn_ntile = dern.ntile `;
+    sql = `
+  /* ntileCross(${JSON.stringify(p)}) */
+  select  '${agg}' as aggField,
+          '${measurename}' as measurename,
+          cn_ntile as ntile,
+          count(${agg}) as count,
+          min(${agg}), max(${agg}), avg(${agg})
+  from (${withEmptyNtiles}
+  ) wen
+  group by 1,2,3
+  order by 2,3 `;
+    return sql;
   }
-  function expPlusEraNum(p) {
-    let {resultsSchema, maxgap, concept_id, person_id, 
+  let max_exp = `
+        /* ntileCross max_exp */
+        select max(${bundleCol}) 
+        from (${sql}
+        ) s `;
+  let crossNums = `
+      /* ntileCross crossNums cn */
+      select generate_series as cn_${bundleCol}, b.ntile as cn_ntile
+      from generate_series(${first_exp}, (${max_exp}
+      ))
+      join (select generate_series as ntile 
+            from generate_series(1,@ntiles)) b on 1=1
+      `;
+  let withEmptyNtiles = `
+    /* ntileCross withEmptyNtiles wen */
+    select cn.*, dern.*
+    from (${crossNums}
+    ) cn
+    left outer join (${sql}) dern
+      on cn.cn_ntile = dern.ntile and cn.cn_${bundleCol} = dern.${bundleCol} `;
+  sql = `
+  /* ntileCross(${JSON.stringify(p)}) */
+  select  '${agg}' as aggField,
+          '${measurename}' as measurename,
+          cn_${bundleCol} as ${bundleCol},
+          cn_ntile as ntile,
+          count(${bundleCol}) as count,
+          min(${agg}), max(${agg}), avg(${agg})
+  from (${withEmptyNtiles}
+  ) wen
+  group by 1,2,3,4
+  order by 3,4 `;
+  return sql;
+}
 
-            // ntiles, measurename,  
-            // DON'T WANT TO SEND THESE FORWARD, RIGHT?
-            // MESSES UP INNER exposure_rollup WITH UNNEEDED NTILES
-      //
-            bundle, entityName, filter} = p;
-    let p2 = {resultsSchema, maxgap, concept_id, person_id, bundle, entityName, filter};
-    return `
-                      /* expPlusEraNums(${JSON.stringify(p2)}) */
-                      select sum(case when exp_num = 1 or days_from_latest > @maxgap then 1 else 0 end)
-                                  over (partition by person_id order by exp_num
-                                        rows between unbounded preceding and current row)
-                                    as era_num,
-                            exp_plus_era_num.*
-                      from (${exposure_rollup(p2, false)}
-                      ) exp_plus_era_num `;
+function plainEras(p) {
+  let {resultsSchema, maxgap, concept_id, person_id, ntiles, measurename, bundle, filter} = p;
+  return `
+            /* plainEras(${JSON.stringify(p)}) */
+            select
+                    person_id,
+                    era_num,
+                    count(*) as exposures,
+                    min(era_days) as era_days, /* same in every value, so min,max,avg, doesn't matter */
+                    /*max(drug_exposure_end) - min(drug_exposure_start_date) as era_days, */
+                    sum(days_supply) as total_days_supply,
+                    min(btn_era_gap_days) as btn_era_gap_days,
+                    min(from_exp) as from_exp,
+                    min(to_exp) as to_exp,
+                    min(era_start_date) as era_start_date,
+                    min(era_end_date) as era_end_date,
+                    min(days_from_first_era) as days_from_first_era,
+                    rollup_concept_id
+            from (
+              ${expPlusEraStats(p)}
+            ) exp_w_era_stats
+            ${filter||''}
+            group by person_id, rollup_concept_id, era_num
+                          `;
+}
+function expPlusEraStats(p) {
+  return `
+                /* expPlusEraStats(${JSON.stringify(p)}) */
+                select
+                        max(drug_exposure_end) over (partition by person_id, era_num) - min(drug_exposure_start_date) over (partition by person_id, era_num) as era_days,
+                        first_value(days_from_latest) over (partition by person_id, era_num order by exp_num) as btn_era_gap_days,
+                        min(exp_num) over (partition by person_id, era_num) from_exp,
+                        max(exp_num) over (partition by person_id, era_num) to_exp,
+                        first_value(drug_exposure_start_date) over (partition by person_id, era_num order by exp_num) era_start_date,
+                        last_value(drug_exposure_end) over (partition by person_id, era_num order by exp_num) era_end_date,
+                        first_value(drug_exposure_start_date) over (partition by person_id, era_num order by exp_num) -
+                        first_value(drug_exposure_start_date) over (partition by person_id order by exp_num) as days_from_first_era,
+                        exp_w_era_num.*
+                from ( ${expPlusEraNum(p)}
+                ) exp_w_era_num `;
+}
+function expPlusEraNum(p) {
+  let {resultsSchema, maxgap, concept_id, person_id, 
+
+          // ntiles, measurename,  
+          // DON'T WANT TO SEND THESE FORWARD, RIGHT?
+          // MESSES UP INNER exposure_rollup WITH UNNEEDED NTILES
+    //
+          bundle, entityName, filter} = p;
+  let p2 = {resultsSchema, maxgap, concept_id, person_id, bundle, entityName, filter};
+  return `
+                    /* expPlusEraNums(${JSON.stringify(p2)}) */
+                    select sum(case when exp_num = 1 or days_from_latest > @maxgap then 1 else 0 end)
+                                over (partition by person_id order by exp_num
+                                      rows between unbounded preceding and current row)
+                                  as era_num,
+                          exp_plus_era_num.*
+                    from (${exposure_rollup(p2, false)}
+                    ) exp_plus_era_num `;
+}
+function eras(p) {
+  let {resultsSchema, maxgap, concept_id, person_id, ntiles, measurename, bundle, entityName} = p;
+  let sql = plainEras({resultsSchema, maxgap, concept_id, person_id, ntiles, measurename, bundle, entityName});
+  let where = [];
+
+  let ntilecol =
+        (typeof ntiles === 'undefined' || typeof measurename === 'undefined')
+        ? ''
+        : ntileCol({ntiles, measurename, bundle, entityName}, where);
+
+  let whereClause = '';
+  if (where.length) {
+    whereClause = `where ${where.join(' and ')}`;
   }
-  function eras(p) {
-    let {resultsSchema, maxgap, concept_id, person_id, ntiles, measurename, bundle, entityName} = p;
-    let sql = plainEras({resultsSchema, maxgap, concept_id, person_id, ntiles, measurename, bundle, entityName});
-    let where = [];
+  return `
+          /* eras(${JSON.stringify(p)}) */
+          select ${ntilecol}
+                  plain_eras.*
+          from (${sql}
+          ) plain_eras
+          ${whereClause} `;
+}
 
-    let ntilecol =
-          (typeof ntiles === 'undefined' || typeof measurename === 'undefined')
-          ? ''
-          : ntileCol({ntiles, measurename, bundle, entityName}, where);
+var _cacheDirty = true; // because api server restarted
 
-    let whereClause = '';
-    if (where.length) {
-      whereClause = `where ${where.join(' and ')}`;
+function where(filters) { return filters.length
+                            ? ` where ${filters.join(' and ')} `
+                            : '';}
+function andItems(filters) { return filters.length
+                                ? ` (${filters.join(' and ')}) `
+                                : '';}
+function orItems(filters) { return filters.length
+                                ? ` (${filters.join(' or ')}) `
+                                : '';}
+function cacheDirty(cdm) {
+  var returns = { arg: 'data', type: ['cdm'], root: true };
+  cdm.cacheDirty = function(cb) {
+    cb(null, _cacheDirty);
+    _cacheDirty = false;
+  };
+  cdm.remoteMethod('cacheDirty', {
+    accepts: [],
+    returns,
+    accessType: 'READ',
+    http: { verb: 'get' }
+  });
+}
+function runQuery(cdm, cb, sql, params) {
+  var ds = cdm.dataSource;
+  console.log('==============>\nRequest:\n', params, sql, '\n<==============\n');
+  ds.connector.query(sql, [], function(err, rows) {
+    if (err) {
+      console.error(err);
+      cb(err, []);
+    } else {
+      console.log('==============>\nResponse:\n', params, sql, `${rows.length} rows`, '\n<==============\n');
+      console.warn("TRUNCATING TO 1000 ROWS!!! FIX THIS (with pagination?)!!!");
+      cb(err, rows.slice(0,1000));
     }
-    return `
-            /* eras(${JSON.stringify(p)}) */
-            select ${ntilecol}
-                    plain_eras.*
-            from (${sql}
-            ) plain_eras
-            ${whereClause} `;
-  }
-
-};
+  });
+}
+function toNamedParams(p, accepts) {
+  let params = {};
+  accepts.forEach(arg => params[arg.arg] = p.shift());
+  return params;
+}
 
 /*
 console.log(Object.keys(loopback));
 
 var memory = loopback.createDataSource({
-  connector: loopback.Memory,
-  //file: "mydata.json"
+connector: loopback.Memory,
+//file: "mydata.json"
 });
 var MemModel = loopback.PersistedModel.extend('var MemModel');
 MemModel.setup = function() {
-  var MemModel = this;
+var MemModel = this;
 
+var returns = { arg: 'data', type: ['cdm'], root: true };
+cdm.saveGet = cdm.savePost = 
+  function(key, val, cb) {
+    var ds = MemModel.dataSource;
+
+    console.log('==============>\n', key, val, '\n<==============\n');
+    ds.connector.query(sql, [], function(err, rows) {
+      if (err) console.error(err);
+      //console.log(Object.keys(rows));
+      cb(err, rows.slice(0,1000));
+    });
+  };
+
+var conceptsAccepts = [
+    {arg: 'cdmSchema', type: 'string', required: true },
+    {arg: 'resultsSchema', type: 'string', required: true},
+    {arg: 'fullInfo', type: 'boolean', required: false, default: false},
+    {arg: 'query', type: 'string', required: false},
+    {arg: 'queryName', type: 'string', required: false, default: 'All concept stats'},
+];
+
+cdm.remoteMethod('conceptsGet', {
+  accepts: conceptsAccepts,
+  returns,
+  accessType: 'READ',
+  http: {
+    verb: 'get'
+  }
+});
+cdm.remoteMethod('conceptsPost', {
+  accepts: conceptsAccepts,
+  returns,
+});
+
+}
+*/
+/*
+function drugConceptsOLD(cdm) {
+  /*
+   *  frustrating that this stuff is largely redundant with the non-drug-specific
+   *  versions in 'concepts', but the drug prep tables only get counts from the
+   *  drug_exposure table and take source codes into account, and are a lot smaller
+   *  that the generic stuff in concept_id_occurrence
+   *
+   *  i should figure out how to merge this stuff into the generic version, but
+   *  didn't want to waste time on that... now it's a bit of a mess
+   * /
   var returns = { arg: 'data', type: ['cdm'], root: true };
-  cdm.saveGet = cdm.savePost = 
-    function(key, val, cb) {
-      var ds = MemModel.dataSource;
+  const schemaArgs = [
+    {arg: 'cdmSchema', type: 'string', required: true },
+    {arg: 'resultsSchema', type: 'string', required: true},
+  ];
+  const filterArgs = [
+    {arg: 'excludeInvalidConcepts', type: 'boolean', required: false, default: true},
+    {arg: 'excludeNoMatchingConcepts', type: 'boolean', required: false, default: true},
+    {arg: 'excludeNonStandardConcepts', type: 'boolean', required: false, default: false},
+    {arg: 'includeFiltersOnly', type: 'boolean', required: false, default: false},
+    {arg: 'includeInvalidConcepts', type: 'boolean', required: false, default: true},
+    {arg: 'includeNoMatchingConcepts', type: 'boolean', required: false, default: true},
+    {arg: 'includeNonStandardConcepts', type: 'boolean', required: false, default: false},
+  ];
+  const otherArgs = [
+    {arg: 'queryName', type: 'string', required: false, default: 'All concept stats'},
+  ];
+  var accepts = [].concat(schemaArgs, filterArgs, otherArgs);
 
-      console.log('==============>\n', key, val, '\n<==============\n');
+  function filterConditions(params) {
+    const { cdmSchema, resultsSchema, 
+            excludeInvalidConcepts, excludeNoMatchingConcepts, excludeNonStandardConcepts,
+            includeFiltersOnly,
+            includeInvalidConcepts, includeNoMatchingConcepts, includeNonStandardConcepts,
+          } = params;
+    let filters = [];
+    if (includeFiltersOnly) {
+      let ors = [];
+      if (includeInvalidConcepts) ors.push('c.invalid_reason is not null');
+      if (includeNoMatchingConcepts) ors.push('c.concept_id = 0');
+      if (includeNonStandardConcepts) ors.push('c.standard_concept is null');
+      ors.length && filters.push(orItems(ors));
+    } else {
+      let ands = [];
+      if (excludeInvalidConcepts) ands.push('c.invalid_reason is null');
+      if (excludeNoMatchingConcepts) ands.push('c.concept_id != 0');
+      if (excludeNonStandardConcepts) ands.push('c.standard_concept is not null');
+      ands.length && filters.push(andItems(ands));
+    }
+    return filters;
+  }
+  function drugConceptSql(params, flavor) {
+    let filters = filterConditions(params);
+    let cols =  `
+                  coalesce(sum(dcc.count),0) AS exposure_count,
+                  count(*) AS concept_count
+                `;
+    let groupBy = '';
+    switch (flavor) {
+      case 'counts':
+        break;  // just the counts
+      case 'target':
+        cols = `
+                  c.concept_name AS concept_name,
+                  ct.concept_name AS type_concept_name,
+                  c.invalid_reason, 
+                  c.standard_concept, 
+                  c.domain_id, 
+                  c.vocabulary_id, 
+                  c.concept_class_id,
+                  dcc.drug_concept_id AS concept_id,
+                  dcc.drug_type_concept_id AS type_concept_id,
+                ` + cols;
+        break;
+      case 'source':
+        throw new Error("not handling yet");
+      case 'target_agg':
+        cols = `
+                  ct.concept_name AS type_concept_name,
+                  c.invalid_reason, 
+                  c.standard_concept, 
+                  c.domain_id, 
+                  c.vocabulary_id, 
+                  c.concept_class_id,
+                ` + cols;
+        groupBy = `
+                group by ${_.range(1, 7)}
+                  `;
+        break;
+    }
+    let sql = `
+          SELECT  ${cols}
+          FROM ${params.resultsSchema}.drug_concept_counts dcc
+          JOIN ${params.cdmSchema}.concept c ON dcc.drug_concept_id = c.concept_id
+          JOIN ${params.cdmSchema}.concept ct on dcc.drug_type_concept_id = ct.concept_id and ct.invalid_reason is null
+          ${where(filters)}
+          ${groupBy}
+        `;
+    return sql;
+  }
+
+  cdm.drugConceptAgg = function(..._params) {
+    var accepts = [].concat(schemaArgs, filterArgs, otherArgs);
+    const cb = _params.pop();
+    let params = toNamedParams(_params, accepts);
+    let sql = drugConceptSql(params, 'target_agg');
+    runQuery(cdm, cb, sql, params);
+  };
+  cdm.remoteMethod('drugConceptAgg', { accepts, returns, accessType: 'READ', http: { verb: 'post' } });
+  cdm.remoteMethod('drugConceptAgg', { accepts, returns, accessType: 'READ', http: { verb: 'get' } });
+
+  cdm.drugConceptCounts = function(..._params) {
+    var accepts = [].concat(schemaArgs, filterArgs, otherArgs);
+    const cb = _params.pop();
+    let params = toNamedParams(_params, accepts);
+    let sql = drugConceptSql(params, 'counts');
+    runQuery(cdm, cb, sql, params);
+  };
+  cdm.remoteMethod('drugConceptCounts', { accepts, returns, accessType: 'READ', http: { verb: 'post' } });
+  cdm.remoteMethod('drugConceptCounts', { accepts, returns, accessType: 'READ', http: { verb: 'get' } });
+
+
+
+  let classAccepts = accepts.slice(0).concat({arg: 'domain_id', type: 'string', required: false });
+  cdm.classRelations = function(..._params) {
+    var accepts = [].concat(schemaArgs, filterArgs, otherArgs);
+    const cb = _params.pop();
+    let params = toNamedParams(_params, classAccepts);
+    let domainFilt = '';
+    if (params.domain_id &&
+       ['Drug','Condition'].indexOf(params.domain_id) > -1) {
+      domainFilt = ` and domain_id_1='${params.domain_id}' and domain_id_2='${params.domain_id}' `;
+    }
+    let sql = `
+                select
+                        is_hierarchical,
+                        defines_ancestry,
+                        same_vocab,
+                        sc_1,
+                        sc_2,
+                        vocab_1,
+                        vocab_2,
+                        class_1,
+                        class_2,
+                        relationship_id,
+                        sum(c1_ids) c1_ids,
+                        sum(c2_ids) c2_ids,
+                        sum(c) c
+                from ${params.resultsSchema}.class_relations
+                where invalid_1=false and invalid_2=false
+                  and (is_hierarchical = '1' and defines_ancestry = '1')
+                  /*and (is_hierarchical = '1' or defines_ancestry = '1')* /
+                  /*and defines_ancestry = '1'* /
+                  ${domainFilt}
+                group by 1,2,3,4,5,6,7,8,9,10
+                order by 1,2,3,4,5,6,7,8,9,10
+              `;
+    runQuery(cdm, cb, sql, params);
+  };
+  cdm.remoteMethod('classRelations', { accepts:classAccepts, returns, accessType: 'READ', http: { verb: 'post' } });
+  cdm.remoteMethod('classRelations', { accepts:classAccepts, returns, accessType: 'READ', http: { verb: 'get' } });
+}
+function conceptsOLD(cdm) {
+  var returns = { arg: 'data', type: ['cdm'], root: true };
+
+  const where = (filters) => filters.length
+                              ? ` where ${filters.join(' and ')} `
+                              : '';
+
+  cdm.concepts = 
+    function(cdmSchema, resultsSchema, attr, 
+             excludeInvalidConcepts, excludeNoMatchingConcepts, excludeNonStandardConcepts,
+             query, queryName, cb) {
+      var ds = cdm.dataSource;
+      let allParams = {
+            cdmSchema, resultsSchema, 
+            excludeInvalidConcepts, excludeNoMatchingConcepts, excludeNonStandardConcepts,
+            query, queryName,
+      }
+
+      let sql = '';
+      query = query || queryName;
+      let filters = [];
+      switch (query) {
+        case 'conceptStats':
+          if (attr) {
+            if (excludeInvalidConcepts) filters.push('invalid_reason is null');
+            if (excludeNoMatchingConcepts) filters.push('concept_id != 0');
+            if (excludeNonStandardConcepts) filters.push('standard_concept is not null');
+            sql = `
+                    select ${attr}, sum(count) as dbrecs, count(*) as conceptrecs
+                    from ${resultsSchema}.concept_info
+                    ${where(filters)}
+                    group by 1`;
+          } else {
+            if (excludeInvalidConcepts) filters.push('invalid = false');
+            if (excludeNoMatchingConcepts) filters.push(`vocabulary_id != 'None'`);
+            if (excludeNonStandardConcepts) filters.push('sc is not null');
+            sql = `
+                    select *
+                    from ${resultsSchema}.concept_info_stats
+                    ${where(filters)}
+                  `;
+          }
+          break;
+        case 'conceptCount':
+          if (excludeInvalidConcepts) filters.push('invalid_reason is null');
+          if (excludeNoMatchingConcepts) filters.push('concept_id != 0');
+          if (excludeNonStandardConcepts) filters.push('standard_concept is not null');
+          sql = `
+                  select count(*) as count
+                  from ${cdmSchema}.concept
+                  ${where(filters)}
+                `;
+          break;
+        case 'classRelations':
+          if (excludeInvalidConcepts) filters.push(`invalid_1 = false`, `invalid_2 = false`);
+          if (excludeNoMatchingConcepts) filters.push(`vocab_1 != 'None'`, `vocab_2 != 'None'`);
+          if (excludeNonStandardConcepts) filters.push('sc_1 is not null', 'sc_2 is not null');
+          sql =  `
+                  select * 
+                  from ${resultsSchema}.class_relations 
+                  ${where(filters)}
+                  order by 1,2,5,6,11,8,9,10,16,13,14,15`;
+      }
+      console.log('==============>\nRequest:\n', allParams, sql, '\n<==============\n');
       ds.connector.query(sql, [], function(err, rows) {
-        if (err) console.error(err);
-        //console.log(Object.keys(rows));
-        cb(err, rows.slice(0,1000));
+        if (err) {
+          console.error(err);
+          cb(err, []);
+        } else {
+          console.log('==============>\nResponse:\n', allParams, sql, `${rows.length} rows`, '\n<==============\n');
+          console.warn("TRUNCATING TO 1000 ROWS!!! FIX THIS (with pagination?)!!!");
+          cb(err, rows.slice(0,1000));
+        }
       });
     };
 
   var conceptsAccepts = [
       {arg: 'cdmSchema', type: 'string', required: true },
       {arg: 'resultsSchema', type: 'string', required: true},
-      {arg: 'fullInfo', type: 'boolean', required: false, default: false},
-      {arg: 'query', type: 'string', required: false},
+      {arg: 'attr', type: 'string', required: false},
+      {arg: 'excludeInvalidConcepts', type: 'boolean', required: false, default: true},
+      {arg: 'excludeNoMatchingConcepts', type: 'boolean', required: false, default: true},
+      {arg: 'excludeNonStandardConcepts', type: 'boolean', required: false, default: false},
+      //{arg: 'fullInfo', type: 'boolean', required: false, default: false},
+      {arg: 'query', type: 'string', required: true},
       {arg: 'queryName', type: 'string', required: false, default: 'All concept stats'},
   ];
 
-  cdm.remoteMethod('conceptsGet', {
+  cdm.remoteMethod('concepts', {
     accepts: conceptsAccepts,
     returns,
     accessType: 'READ',
@@ -622,10 +1215,80 @@ MemModel.setup = function() {
       verb: 'get'
     }
   });
-  cdm.remoteMethod('conceptsPost', {
+  cdm.remoteMethod('concepts', {
     accepts: conceptsAccepts,
     returns,
   });
-
 }
+  function drugConceptSql(params, flavor) {
+    let filters = filterConditions(params);
+    let cols =  `
+                  coalesce(sum(dcc.count),0) AS exposure_count,
+                  count(*) AS concept_count
+                `;
+    let groupBy = '';
+    switch (flavor) {
+      case 'counts':
+        break;  // just the counts
+      case 'target':
+        cols = `
+                  c.concept_name AS concept_name,
+                  ct.concept_name AS type_concept_name,
+                  c.invalid_reason, 
+                  c.standard_concept, 
+                  c.domain_id, 
+                  c.vocabulary_id, 
+                  c.concept_class_id,
+                  dcc.drug_concept_id AS concept_id,
+                  dcc.drug_type_concept_id AS type_concept_id,
+                ` + cols;
+        break;
+      case 'source':
+        throw new Error("not handling yet");
+      case 'target_agg':
+        cols = `
+                  ct.concept_name AS type_concept_name,
+                  c.invalid_reason, 
+                  c.standard_concept, 
+                  c.domain_id, 
+                  c.vocabulary_id, 
+                  c.concept_class_id,
+                ` + cols;
+        groupBy = `
+                group by ${_.range(1, 7)}
+                  `;
+        break;
+    }
+    let sql = `
+          SELECT  ${cols}
+          FROM ${params.resultsSchema}.drug_concept_counts dcc
+          JOIN ${params.cdmSchema}.concept c ON dcc.drug_concept_id = c.concept_id
+          JOIN ${params.cdmSchema}.concept ct on dcc.drug_type_concept_id = ct.concept_id and ct.invalid_reason is null
+          ${where(filters)}
+          ${groupBy}
+        `;
+    return sql;
+  }
+
+  cdm.drugConceptAgg = function(..._params) {
+    var accepts = [].concat(schemaArgs, filterArgs, otherArgs);
+    const cb = _params.pop();
+    let params = toNamedParams(_params, accepts);
+    let sql = drugConceptSql(params, 'target_agg');
+    runQuery(cdm, cb, sql, params);
+  };
+  cdm.remoteMethod('drugConceptAgg', { accepts, returns, accessType: 'READ', http: { verb: 'post' } });
+  cdm.remoteMethod('drugConceptAgg', { accepts, returns, accessType: 'READ', http: { verb: 'get' } });
+
+  cdm.drugConceptCounts = function(..._params) {
+    var accepts = [].concat(schemaArgs, filterArgs, otherArgs);
+    const cb = _params.pop();
+    let params = toNamedParams(_params, accepts);
+    let sql = drugConceptSql(params, 'counts');
+    runQuery(cdm, cb, sql, params);
+  };
+  cdm.remoteMethod('drugConceptCounts', { accepts, returns, accessType: 'READ', http: { verb: 'post' } });
+  cdm.remoteMethod('drugConceptCounts', { accepts, returns, accessType: 'READ', http: { verb: 'get' } });
+
+
 */
