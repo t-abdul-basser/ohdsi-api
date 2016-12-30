@@ -112,54 +112,62 @@ function concepts(cdm) { // consolidating?
     {arg: 'dataRequested', type: 'string', required: true},
     {arg: 'queryName', type: 'string', required: false, default: 'All concept stats'},
     {arg: 'domain_id', type: 'string', required: false,
-              validCheck: v => _.includes(['Drug','Condition','Procedure'],v)},
+              validCheck: v => typeof v === 'undefined' || _.includes(['Drug','Condition','Procedure'],v)},
     {arg: 'targetOrSource', type: 'string', required: false, default: 'target',
-              validCheck: v => _.includes(['target','source'],v)},
+              validCheck: v => _.includes(['target','source','both'],v)},
     {arg: 'includeTypeCol', type: 'boolean', required: false, default: true},
     //{arg: 'query', type: 'string', required: true},
   ];
   var accepts = [].concat(schemaArgs, filterArgs, otherArgs);
 
-  cdm.concepts = function(..._params) {
+  cdm.conceptCounts = function(..._params) {
     var accepts = [].concat(schemaArgs, filterArgs, otherArgs);
     const cb = _params.pop();
     let params = toNamedParams(_params, accepts);
     console.log(params);
-    let sql = conceptSql(params);
+    let sql;
+    if (params.targetOrSource === 'both') {
+      sql = conceptSql(_.merge({},params,{targetOrSource:'target'}),true)
+            + '\nunion\n' +
+            conceptSql(_.merge({},params,{targetOrSource:'source'}),true)
+    } else {
+      sql = conceptSql(params);
+    }
     runQuery(cdm, cb, sql, params);
   };
 
-  cdm.remoteMethod('concepts', { accepts, returns, accessType: 'READ', http: { verb: 'post' } });
-  cdm.remoteMethod('concepts', { accepts, returns, accessType: 'READ', http: { verb: 'get' } });
+  cdm.remoteMethod('conceptCounts', { accepts, returns, accessType: 'READ', http: { verb: 'post' } });
+  cdm.remoteMethod('conceptCounts', { accepts, returns, accessType: 'READ', http: { verb: 'get' } });
 
-  function conceptSql(params) {
+  function conceptSql(params, targetSourceCol = false) {
     let filters = filterConditions(params);
     let cols = [];
     let countCols = [ `coalesce(sum(cio.count),0) AS record_count`,
                       `count(*) AS concept_count` ];
     let conceptCols = [];
-    let additionalBreakdownCols = [ 'c.invalid_reason', 
+    let additionalBreakdownCols = [ 
+                                    'c.invalid_reason', 
                                     'c.standard_concept', 
                                     'c.domain_id', 
                                     'c.vocabulary_id', 
                                     'c.concept_class_id'];
 
-    let conceptCol = ({
-                            target: 'target_concept_id',
-                            source: 'source_concept_id'
-                      })[params.targetOrSource];
-
-    /* put this stuff back in for non-aggregate calls
-    let conceptCols = [conceptCol + ' as concept_id'];
-    if (params.includeTypeCol) {
-      conceptCols.push(`ct.concept_name as type_concept_name`);
-    }
-    */
-
     let typeJoin = '';
     if (params.includeTypeCol) {
       typeJoin = `JOIN ${params.cdmSchema}.concept ct on cio.type_concept_id = ct.concept_id and ct.invalid_reason is null`;
+      additionalBreakdownCols.unshift('ct.concept_name as type_concept_name');
     }
+
+    // validated targetOrSource already
+    let conceptCol = `cio.${params.targetOrSource}_concept_id`;
+    let conceptColName = `cio.${params.targetOrSource}_column_name as column_name`;
+
+    additionalBreakdownCols.unshift(conceptColName);
+
+    if (targetSourceCol)
+      additionalBreakdownCols.unshift(`'${params.targetOrSource}' as targetOrSource`);
+
+    additionalBreakdownCols.unshift('cio.table_name');
 
     let groupBy = '';
     switch (params.dataRequested) {
@@ -167,6 +175,10 @@ function concepts(cdm) { // consolidating?
         cols = cols.concat(countCols);
         break;
       case 'agg':
+        cols = cols.concat(conceptCols, additionalBreakdownCols, countCols);
+        groupBy = `group by ${_.range(1, cols.length - countCols.length + 1)}`;
+        break;
+      case 'details':
         cols = cols.concat(conceptCols, additionalBreakdownCols, countCols);
         groupBy = `group by ${_.range(1, cols.length - countCols.length + 1)}`;
         break;
@@ -188,13 +200,13 @@ function concepts(cdm) { // consolidating?
         throw new Error("not handling yet");
       */
       default:
-        throw new Error(`not handling concepts/${params.dataRequested} yet`);
+        throw new Error(`not handling conceptCounts/${params.dataRequested} yet`);
     }
 
     let sql = `
           SELECT  ${cols.join(', ')}
           FROM ${params.resultsSchema}.concept_id_occurrence cio
-          JOIN ${params.cdmSchema}.concept c ON cio.${conceptCol} = c.concept_id
+          JOIN ${params.cdmSchema}.concept c ON ${conceptCol} = c.concept_id
           ${typeJoin}
           ${where(filters)}
           ${groupBy}
@@ -273,8 +285,9 @@ function concepts(cdm) { // consolidating?
     const cb = _params.pop();
     let params = toNamedParams(_params, classAccepts);
     let domainFilt = '';
-    if (params.domain_id &&
-       ['Drug','Condition'].indexOf(params.domain_id) > -1) {
+    if (params.domain_id) {
+       //['Drug','Condition'].indexOf(params.domain_id) > -1  // checking elsewhere
+      // or maybe not yet, but should be
       domainFilt = ` and domain_id_1='${params.domain_id}' and domain_id_2='${params.domain_id}' `;
     }
     let sql = `
