@@ -279,7 +279,11 @@ function concepts(cdm) { // consolidating?
     return filters;
   }
 
-  let classAccepts = accepts.slice(0).concat({arg: 'domain_id', type: 'string', required: false });
+  let classAccepts = accepts.slice(0).concat(
+    {arg: 'domain_id', type: 'string', required: false },
+    {arg: 'hierarchical', type: 'string', required: false, default: 'either',
+              validCheck: v => _.includes(['is_hierarchical','defines_ancestry','both', 'either','neither'],v)}
+  ) 
   cdm.classRelations = function(..._params) {
     var accepts = [].concat(schemaArgs, filterArgs, otherArgs);
     const cb = _params.pop();
@@ -290,6 +294,25 @@ function concepts(cdm) { // consolidating?
       // or maybe not yet, but should be
       domainFilt = ` and domain_id_1='${params.domain_id}' and domain_id_2='${params.domain_id}' `;
     }
+    let hierFilt = '';
+    switch (params.hierarchical) {
+      case 'is_hierarchical':
+        hierFilt = ` and is_hierarchical = '1' `;
+        break;
+      case 'defines_ancestry':
+        hierFilt = ` and defines_ancestry = '1' `;
+        break;
+      case 'both':
+        hierFilt = ` and is_hierarchical = '1' and defines_ancestry = '1' `;
+        break;
+      case 'either':
+        hierFilt = ` and (is_hierarchical = '1' or defines_ancestry = '1') `;
+        break;
+      case 'neither':
+        hierFilt = ` and is_hierarchical != '1' and defines_ancestry != '1'`;
+        break;
+    }
+
     let sql = `
                 select
                         is_hierarchical,
@@ -307,9 +330,7 @@ function concepts(cdm) { // consolidating?
                         sum(c) c
                 from ${params.resultsSchema}.class_relations
                 where invalid_1=false and invalid_2=false
-                  and (is_hierarchical = '1' and defines_ancestry = '1')
-                  /*and (is_hierarchical = '1' or defines_ancestry = '1')*/
-                  /*and defines_ancestry = '1'*/
+                  ${hierFilt}
                   ${domainFilt}
                 group by 1,2,3,4,5,6,7,8,9,10
                 order by 1,2,3,4,5,6,7,8,9,10
