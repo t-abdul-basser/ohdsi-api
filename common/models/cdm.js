@@ -332,6 +332,7 @@ function concepts(cdm) { // consolidating?
                 where invalid_1=false and invalid_2=false
                   ${hierFilt}
                   ${domainFilt}
+                  --and sc_2 is not null -- is this the right thing to do?
                 group by 1,2,3,4,5,6,7,8,9,10
                 order by 1,2,3,4,5,6,7,8,9,10
               `;
@@ -339,6 +340,43 @@ function concepts(cdm) { // consolidating?
   };
   cdm.remoteMethod('classRelations', { accepts:classAccepts, returns, accessType: 'READ', http: { verb: 'post' } });
   cdm.remoteMethod('classRelations', { accepts:classAccepts, returns, accessType: 'READ', http: { verb: 'get' } });
+
+
+
+  cdm.classPedigree = function(..._params) {
+    var accepts = [].concat(schemaArgs, filterArgs, otherArgs);
+    const cb = _params.pop();
+    let params = toNamedParams(_params, classAccepts);
+    let domainFilt = '';
+    if (params.domain_id) {
+       //['Drug','Condition'].indexOf(params.domain_id) > -1  // checking elsewhere
+      // or maybe not yet, but should be
+      domainFilt = ` and domain_id_1='${params.domain_id}' and domain_id_2='${params.domain_id}' `;
+    }
+    let sql = `
+                select
+                        source,
+                        min_levels_of_separation,
+                        sc_1,
+                        sc_2,
+                        vocab_1,
+                        vocab_2,
+                        class_1,
+                        class_2,
+                        sum(c1_ids) c1_ids,
+                        sum(c2_ids) c2_ids,
+                        sum(c) c
+                from ${params.resultsSchema}.class_pedigree
+                where (1=1)
+                  ${domainFilt}
+                  and sc_2 is not null -- is this the right thing to do?
+                group by 1,2,3,4,5,6,7,8
+                order by 1,2,3,4,5,6,7,8
+              `;
+    runQuery(cdm, cb, sql, params);
+  };
+  cdm.remoteMethod('classPedigree', { accepts:classAccepts, returns, accessType: 'READ', http: { verb: 'post' } });
+  cdm.remoteMethod('classPedigree', { accepts:classAccepts, returns, accessType: 'READ', http: { verb: 'get' } });
   var returns = { arg: 'data', type: ['cdm'], root: true };
 
 }
@@ -891,8 +929,9 @@ function runQuery(cdm, cb, sql, params) {
       cb(err, []);
     } else {
       console.log('==============>\nResponse:\n', params, sql, `${rows.length} rows`, '\n<==============\n');
-      console.warn("TRUNCATING TO 1000 ROWS!!! FIX THIS (with pagination?)!!!");
-      cb(err, rows.slice(0,1000));
+      //console.warn("TRUNCATING TO 1000 ROWS!!! FIX THIS (with pagination?)!!!");
+      //cb(err, rows.slice(0,1000));
+      cb(err, rows);
     }
   });
 }
