@@ -23,15 +23,17 @@ app.start = function() {
     //var explorerPath = app.get('loopback-component-explorer').mountPath;
     console.log('Browse your REST API at %s%s', baseUrl, '/explorer');
 
+    /*
     app.use(function(req, res, next) {
       console.log('request', baseUrl + req.url);
       next();
     });
+    */
   });
 };
 
-// Bootstrap the application, configure models, datasources and middleware.
-// Sub-apps like REST API are mounted via boot scripts.
+// bootstrap the application, configure models, datasources and middleware.
+// sub-apps like rest api are mounted via boot scripts.
 boot(app, __dirname, function(err) {
   if (err) throw err;
 

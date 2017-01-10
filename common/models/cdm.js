@@ -116,6 +116,7 @@ function concepts(cdm) { // consolidating?
     {arg: 'targetOrSource', type: 'string', required: false, default: 'target',
               validCheck: v => _.includes(['target','source','both'],v)},
     {arg: 'includeTypeCol', type: 'boolean', required: false, default: true},
+    {arg: 'req', type: 'object', http: { source: 'req' }},
     //{arg: 'query', type: 'string', required: true},
   ];
   var accepts = [].concat(schemaArgs, filterArgs, otherArgs);
@@ -124,7 +125,7 @@ function concepts(cdm) { // consolidating?
     var accepts = [].concat(schemaArgs, filterArgs, otherArgs);
     const cb = _params.pop();
     let params = toNamedParams(_params, accepts);
-    console.log(params);
+    //console.log(params);
     let sql;
     if (params.targetOrSource === 'both') {
       sql = conceptSql(_.merge({},params,{targetOrSource:'target'}),true)
@@ -923,12 +924,16 @@ function cacheDirty(cdm) {
 }
 function runQuery(cdm, cb, sql, params) {
   var ds = cdm.dataSource;
+  var url = `\nurl ---> ${cdm.app.get('url').replace(/\/$/, '') + params.req.url}\n`;
+  delete params.req;
   ds.connector.query(sql, [], function(err, rows) {
     if (err) {
-      console.error('==============>\nRequest Error:\n', err, params, sql, '\n<==============\n');
+      console.error('==============>\nRequest Error:\n', err, params, sql, 
+                        url, '\n<==============\n');
       cb(err, []);
     } else {
-      console.log('==============>\nResponse:\n', params, sql, `${rows.length} rows`, '\n<==============\n');
+      console.log('==============>\nResponse:\n', params, sql, `${rows.length} rows`, 
+                        url, '\n<==============\n');
       //console.warn("TRUNCATING TO 1000 ROWS!!! FIX THIS (with pagination?)!!!");
       //cb(err, rows.slice(0,1000));
       cb(err, rows);
