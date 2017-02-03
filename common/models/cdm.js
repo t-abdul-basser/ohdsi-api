@@ -3,100 +3,17 @@ var _ = require('lodash');
 
 module.exports = function(cdm) {
   concepts(cdm);
-  sampleUsers(cdm);
+  //sampleUsers(cdm);
   cacheDirty(cdm);
   //drugConcepts(cdm);
-
   //exposureQueries(cdm); // code is still here but not being used (yet) in this project
 }
 function concepts(cdm) { // consolidating?
-  /*
-  { cdmSchema: 'cdm2',
-    resultsSchema: 'results2',
-    excludeInvalidConcepts: true,
-    excludeNoMatchingConcepts: true,
-    excludeNonStandardConcepts: true,
-    query: 'conceptStats',
-    queryName: undefined }
-                    select *
-                    from results2.concept_info_stats
-                     where invalid = false and vocabulary_id != 'None' and sc is not null
-                   282 rows
-
-  { cdmSchema: 'cdm2',
-    resultsSchema: 'results2',
-    excludeInvalidConcepts: undefined,
-    excludeNoMatchingConcepts: undefined,
-    excludeNonStandardConcepts: undefined,
-    includeFiltersOnly: true,
-    includeInvalidConcepts: true,
-    includeNoMatchingConcepts: undefined,
-    includeNonStandardConcepts: undefined,
-    queryName: 'Invalid' }
-          SELECT
-                  coalesce(sum(dcc.count),0) AS exposure_count,
-                  count(*) AS concept_count
-
-          FROM results2.drug_concept_counts dcc
-          JOIN cdm2.concept c ON dcc.drug_concept_id = c.concept_id
-          JOIN cdm2.concept ct on dcc.drug_type_concept_id = ct.concept_id and ct.invalid_reason is null
-           where  (c.invalid_reason is not null)
-         1 rows
-
-  { cdmSchema: 'cdm2',
-    resultsSchema: 'results2',
-    excludeInvalidConcepts: false,
-    excludeNoMatchingConcepts: true,
-    excludeNonStandardConcepts: true,
-    includeFiltersOnly: undefined,
-    includeInvalidConcepts: undefined,
-    includeNoMatchingConcepts: undefined,
-    includeNonStandardConcepts: undefined,
-    queryName: 'With current filters' }
-          SELECT
-                  coalesce(sum(dcc.count),0) AS exposure_count,
-                  count(*) AS concept_count
-
-          FROM results2.drug_concept_counts dcc
-          JOIN cdm2.concept c ON dcc.drug_concept_id = c.concept_id
-          JOIN cdm2.concept ct on dcc.drug_type_concept_id = ct.concept_id and ct.invalid_reason is null
-           where  (c.concept_id != 0 and c.standard_concept is not null)
-         1 rows
-
-  { cdmSchema: 'cdm2',
-    resultsSchema: 'results2',
-    excludeInvalidConcepts: false,
-    excludeNoMatchingConcepts: true,
-    excludeNonStandardConcepts: true,
-    includeFiltersOnly: undefined,
-    includeInvalidConcepts: undefined,
-    includeNoMatchingConcepts: undefined,
-    includeNonStandardConcepts: undefined,
-    queryName: 'drugagg' }
-          SELECT
-                  ct.concept_name AS type_concept_name,
-                  c.invalid_reason,
-                  c.standard_concept,
-                  c.domain_id,
-                  c.vocabulary_id,
-                  c.concept_class_id,
-
-                  coalesce(sum(dcc.count),0) AS exposure_count,
-                  count(*) AS concept_count
-
-          FROM results2.drug_concept_counts dcc
-          JOIN cdm2.concept c ON dcc.drug_concept_id = c.concept_id
-          JOIN cdm2.concept ct on dcc.drug_type_concept_id = ct.concept_id and ct.invalid_reason is null
-           where  (c.concept_id != 0 and c.standard_concept is not null)
-
-                group by 1,2,3,4,5,6
-
-         12 rows
-  */
   var returns = { arg: 'data', type: ['cdm'], root: true };
   const schemaArgs = [
     {arg: 'cdmSchema', type: 'string', required: true },
     {arg: 'resultsSchema', type: 'string', required: true},
+    {arg: 'req', type: 'object', http: { source: 'req' }},
   ];
   const filterArgs = [
     {arg: 'excludeInvalidConcepts', type: 'boolean', required: false, default: true},
@@ -106,20 +23,46 @@ function concepts(cdm) { // consolidating?
     {arg: 'includeInvalidConcepts', type: 'boolean', required: false, default: true},
     {arg: 'includeNoMatchingConcepts', type: 'boolean', required: false, default: true},
     {arg: 'includeNonStandardConcepts', type: 'boolean', required: false, default: false},
-    //{arg: 'attr', type: 'string', required: false},
-  ];
-  const otherArgs = [
-    {arg: 'dataRequested', type: 'string', required: true},
-    {arg: 'queryName', type: 'string', required: false, default: 'All concept stats'},
     {arg: 'domain_id', type: 'string', required: false,
-              validCheck: v => typeof v === 'undefined' || _.includes(['Drug','Condition','Procedure'],v)},
+              validCheck: v => typeof v === 'undefined' || 
+                                _.includes([
+                                  //'Drug','Condition','Procedure'
+                                  "Condition/Device", "Gender", "Race", "Ethnicity", "Metadata", "Visit", "Procedure", "Modifier", "Drug", "Route", "Unit", "Device", "Condition", "Measurement", "Meas Value Operator", "Meas Value", "Observation", "Relationship", "Place of Service", "Provider Specialty", "Currency", "Revenue Code", "Specimen", "Spec Anatomic Site", "Spec Disease Status", "Device/Procedure", "Obs/Procedure", "Measurement/Obs", "Device/Obs", "Condition/Meas", "Condition/Obs", "Condition/Procedure", "Device/Drug", "Drug/Measurement", "Drug/Obs", "Condition/Drug", "Drug/Procedure", "Meas/Procedure", "Type Concept"
+                                ],v)},
+    {arg: 'grpset', type: 'string', required: false,
+              validCheck: v => typeof v === 'undefined' || 
+                                _.includes([
+                                  'domain_id,standard_concept,vocabulary_id'
+                                ],v)},
+  ];
+  /*
+  const groupByArgs = [
+    {arg: 'groupBy', type: ['string'], required: false,
+              validCheck: v => _.isEmpty(v) ||
+                               Array.isArray(v) &&
+                               _.every(v, v => _.includes([
+                                        'domain_1','vocab_1','class_1',
+                                        'sc_1','table_1','column_1','type_1',
+                                        'domain_2','vocab_2','class_2',
+                                        'sc_2','table_2','column_2','type_2',
+                                        ],v)) },
+  ];
+  */
+  const otherArgs = [
+    {arg: 'dataRequested', type: 'string', required: false},
+    {arg: 'queryName', type: 'string', required: false, default: 'All concept stats'},
     {arg: 'targetOrSource', type: 'string', required: false, default: 'target',
               validCheck: v => _.includes(['target','source','both'],v)},
-    {arg: 'includeTypeCol', type: 'boolean', required: false, default: true},
-    {arg: 'req', type: 'object', http: { source: 'req' }},
+    {arg: 'includeTypeCol', type: 'boolean', required: false, default: false},
     //{arg: 'query', type: 'string', required: true},
   ];
   var accepts = [].concat(schemaArgs, filterArgs, otherArgs);
+  let classAccepts = accepts.slice(0).concat(
+    //groupByArgs,
+    //{arg: 'domain_id', type: 'string', required: false },
+    {arg: 'hierarchical', type: 'string', required: false, default: 'either',
+              validCheck: v => _.includes(['is_hierarchical','defines_ancestry','both', 'either','neither'],v)}
+  ) 
 
   cdm.conceptCounts = function(..._params) {
     var accepts = [].concat(schemaArgs, filterArgs, otherArgs);
@@ -127,6 +70,8 @@ function concepts(cdm) { // consolidating?
     let params = toNamedParams(_params, accepts);
     //console.log(params);
     let sql;
+    sql = conceptSql(params);
+    /* got rid of separate target/source concepts in cio table
     if (params.targetOrSource === 'both') {
       sql = conceptSql(_.merge({},params,{targetOrSource:'target'}),true)
             + '\nunion\n' +
@@ -134,6 +79,7 @@ function concepts(cdm) { // consolidating?
     } else {
       sql = conceptSql(params);
     }
+    */
     runQuery(cdm, cb, sql, params);
   };
 
@@ -155,13 +101,17 @@ function concepts(cdm) { // consolidating?
 
     let typeJoin = '';
     if (params.includeTypeCol) {
-      typeJoin = `JOIN ${params.cdmSchema}.concept ct on cio.type_concept_id = ct.concept_id and ct.invalid_reason is null`;
-      additionalBreakdownCols.unshift('ct.concept_name as type_concept_name');
+      console.warn("no longer using type_concept_id in cio table");
+      //typeJoin = `JOIN ${params.cdmSchema}.concept ct on cio.type_concept_id = ct.concept_id and ct.invalid_reason is null`;
+      //additionalBreakdownCols.unshift('ct.concept_name as type_concept_name');
     }
 
     // validated targetOrSource already
-    let conceptCol = `cio.${params.targetOrSource}_concept_id`;
-    let conceptColName = `cio.${params.targetOrSource}_column_name as column_name`;
+    // quit using targetOrSource
+    // let conceptCol = `cio.${params.targetOrSource}_concept_id`;
+    // let conceptColName = `cio.${params.targetOrSource}_column_name as column_name`;
+    let conceptCol = `cio.concept_id`;
+    let conceptColName = `cio.column_name as column_name`;
 
     additionalBreakdownCols.unshift(conceptColName);
 
@@ -228,7 +178,7 @@ function concepts(cdm) { // consolidating?
         } else {
           if (excludeInvalidConcepts) filters.push('invalid = false');
           if (excludeNoMatchingConcepts) filters.push(`vocabulary_id != 'None'`);
-          if (excludeNonStandardConcepts) filters.push('sc is not null');
+          if (excludeNonStandardConcepts) filters.push('standard_concept is not null');
           sql = `
                   select *
                   from ${resultsSchema}.concept_info_stats
@@ -279,107 +229,89 @@ function concepts(cdm) { // consolidating?
     }
     return filters;
   }
+  cdm.counts = function(..._params) {
+    const cb = _params.pop();
+    let params = toNamedParams(_params, schemaArgs);
+    let sql = `
+        select cg.*
+        from ${params.resultsSchema}.concept_groups cg 
+        `;
+    let rowTransform = d => {
+        d.cc = parseInt(d.cc,10);
+        d.rc_rowcnt = parseInt(d.rc_rowcnt,10);
+        d.tblcols = parseInt(d.tblcols,10);
+        d.rc = parseInt(d.rc,10);
+        d.src = parseInt(d.src,10);
+        d.cidcnt = parseInt(d.cidcnt,10);
+        d.dcc = parseInt(d.dcc,10);
+        d.drc = parseInt(d.drc,10);
+        d.dsrc = parseInt(d.dsrc,10);
+        d.grpset.forEach((fld,i) => d[fld] = d.vals[i]);
+        return d;
+    };
+    runQuery(cdm, cb, sql, params, rowTransform);
+  }
+  cdm.remoteMethod('counts', { accepts:schemaArgs, returns, accessType: 'READ', http: { verb: 'post' } });
+  cdm.remoteMethod('counts', { accepts:schemaArgs, returns, accessType: 'READ', http: { verb: 'get' } });
 
-  let classAccepts = accepts.slice(0).concat(
-    {arg: 'domain_id', type: 'string', required: false },
-    {arg: 'hierarchical', type: 'string', required: false, default: 'either',
-              validCheck: v => _.includes(['is_hierarchical','defines_ancestry','both', 'either','neither'],v)}
-  ) 
-  cdm.classRelations = function(..._params) {
-    var accepts = [].concat(schemaArgs, filterArgs, otherArgs);
+
+  cdm.conceptGroups = function(..._params) {
+    //var accepts = [].concat(schemaArgs, filterArgs, otherArgs);
     const cb = _params.pop();
     let params = toNamedParams(_params, classAccepts);
-    let domainFilt = '';
-    if (params.domain_id) {
-       //['Drug','Condition'].indexOf(params.domain_id) > -1  // checking elsewhere
-      // or maybe not yet, but should be
-      domainFilt = ` and domain_id_1='${params.domain_id}' and domain_id_2='${params.domain_id}' `;
+    let filters = [], vals = [];
+    // FIX SQL INJECT PROBLEM!!! (use query params)
+    filters = ['domain_id','standard_concept','vocabulary_id',
+               'class_concept_id','tbl','col','coltype']
+      .filter(fld => params[fld])
+      .map(fld => `#TBL#.vals[array_position(#TBL#.grpset, '${fld}')] = '${params[fld]}'`);
+    if (params.grpset) {
+      let cols = params.grpset.split(/,/);
+      cols = cols.map(d=>`'${d}'`).join(',');
+      filters.push(`#TBL#.grpset = array[${cols}]`); // fix sql inject
+      //vals.push(params.grpset);
     }
-    let hierFilt = '';
-    switch (params.hierarchical) {
-      case 'is_hierarchical':
-        hierFilt = ` and is_hierarchical = '1' `;
-        break;
-      case 'defines_ancestry':
-        hierFilt = ` and defines_ancestry = '1' `;
-        break;
-      case 'both':
-        hierFilt = ` and is_hierarchical = '1' and defines_ancestry = '1' `;
-        break;
-      case 'either':
-        hierFilt = ` and (is_hierarchical = '1' or defines_ancestry = '1') `;
-        break;
-      case 'neither':
-        hierFilt = ` and is_hierarchical != '1' and defines_ancestry != '1'`;
-        break;
-    }
-
+    let where = filters.length ?
+                  `where ${filters.join(' and ').replace(/#TBL#/g,'cg')}` : '';
+    /*
     let sql = `
-                select
-                        is_hierarchical,
-                        defines_ancestry,
-                        same_vocab,
-                        sc_1,
-                        sc_2,
-                        vocab_1,
-                        vocab_2,
-                        class_1,
-                        class_2,
-                        relationship_id,
-                        sum(c1_ids) c1_ids,
-                        sum(c2_ids) c2_ids,
-                        sum(c) c
-                from ${params.resultsSchema}.class_relations
-                where invalid_1=false and invalid_2=false
-                  ${hierFilt}
-                  ${domainFilt}
-                  --and sc_2 is not null -- is this the right thing to do?
-                group by 1,2,3,4,5,6,7,8,9,10
-                order by 1,2,3,4,5,6,7,8,9,10
+                select *
+                from ${params.resultsSchema}.concept_groups cg 
+                ${where}
               `;
-    runQuery(cdm, cb, sql, params);
-  };
-  cdm.remoteMethod('classRelations', { accepts:classAccepts, returns, accessType: 'READ', http: { verb: 'post' } });
-  cdm.remoteMethod('classRelations', { accepts:classAccepts, returns, accessType: 'READ', http: { verb: 'get' } });
-
-
-
-  cdm.classPedigree = function(..._params) {
-    var accepts = [].concat(schemaArgs, filterArgs, otherArgs);
-    const cb = _params.pop();
-    let params = toNamedParams(_params, classAccepts);
-    let domainFilt = '';
-    if (params.domain_id) {
-       //['Drug','Condition'].indexOf(params.domain_id) > -1  // checking elsewhere
-      // or maybe not yet, but should be
-      domainFilt = ` and domain_id_1='${params.domain_id}' and domain_id_2='${params.domain_id}' `;
-    }
+    */
     let sql = `
-                select
-                        source,
-                        min_levels_of_separation,
-                        sc_1,
-                        sc_2,
-                        vocab_1,
-                        vocab_2,
-                        class_1,
-                        class_2,
-                        sum(c1_ids) c1_ids,
-                        sum(c2_ids) c2_ids,
-                        sum(c) c
-                from ${params.resultsSchema}.class_pedigree
-                where (1=1)
-                  ${domainFilt}
-                  and sc_2 is not null -- is this the right thing to do?
-                group by 1,2,3,4,5,6,7,8
-                order by 1,2,3,4,5,6,7,8
-              `;
-    runQuery(cdm, cb, sql, params);
+        select cg.*,
+              array_remove(
+                array_unique(array_agg(array_to_string(dg.vals,','))),null) linknodes
+              --,sum(dg.dcc), sum(dg.dtblcols), sum(dg.drc), sum(dg.dsrc)
+        from ${params.resultsSchema}.concept_groups cg 
+        left join ${params.resultsSchema}.dcid_cnts_breakdown dg 
+            on cg.dcid_grp_id = dg.dcid_grp_id and
+               cg.grpset = dg.grpset and
+               cg.vals[1] = dg.vals[1] and
+               ${filters.join(' and ').replace(/#TBL#/g,'dg')}
+        ${where}
+        group by 1,2,3,4,5,6,7,8,9,10,11,12,13,14`;
+    let rowTransform = d => {
+        d.cc = parseInt(d.cc,10);
+        d.rc_rowcnt = parseInt(d.rc_rowcnt,10);
+        d.tblcols = parseInt(d.tblcols,10);
+        d.rc = parseInt(d.rc,10);
+        d.src = parseInt(d.src,10);
+        d.cidcnt = parseInt(d.cidcnt,10);
+        d.dcc = parseInt(d.dcc,10);
+        d.drc = parseInt(d.drc,10);
+        d.dsrc = parseInt(d.dsrc,10);
+        d.grpset.forEach((fld,i) => d[fld] = d.vals[i]);
+        return d;
+    };
+    runQuery(cdm, cb, sql, params, rowTransform, true);
   };
-  cdm.remoteMethod('classPedigree', { accepts:classAccepts, returns, accessType: 'READ', http: { verb: 'post' } });
-  cdm.remoteMethod('classPedigree', { accepts:classAccepts, returns, accessType: 'READ', http: { verb: 'get' } });
+  console.log('registering conceptGroups');
+  cdm.remoteMethod('conceptGroups', { accepts:classAccepts, returns, accessType: 'READ', http: { verb: 'post' } });
+  cdm.remoteMethod('conceptGroups', { accepts:classAccepts, returns, accessType: 'READ', http: { verb: 'get' } });
   var returns = { arg: 'data', type: ['cdm'], root: true };
-
 }
 function sampleUsers(cdm) {
   var returns = { arg: 'data', type: ['cdm'], root: true };
@@ -922,10 +854,13 @@ function cacheDirty(cdm) {
     http: { verb: 'get' }
   });
 }
-function runQuery(cdm, cb, sql, params) {
+function runQuery(cdm, cb, sql, params, rowTransform=d=>d, logRequest) {
   var ds = cdm.dataSource;
   var url = `\nurl ---> ${cdm.app.get('url').replace(/\/$/, '') + params.req.url}\n`;
   delete params.req;
+  if (logRequest)
+    console.log('==============>\nRequest:\n', params, sql, 
+                  url, '\n<==============\n');
   ds.connector.query(sql, [], function(err, rows) {
     if (err) {
       console.error('==============>\nRequest Error:\n', err, params, sql, 
@@ -936,7 +871,7 @@ function runQuery(cdm, cb, sql, params) {
                         url, '\n<==============\n');
       //console.warn("TRUNCATING TO 1000 ROWS!!! FIX THIS (with pagination?)!!!");
       //cb(err, rows.slice(0,1000));
-      cb(err, rows);
+      cb(err, rows.map(rowTransform));
     }
   });
 }
@@ -1039,7 +974,7 @@ function conceptsOLD(cdm) {
           } else {
             if (excludeInvalidConcepts) filters.push('invalid = false');
             if (excludeNoMatchingConcepts) filters.push(`vocabulary_id != 'None'`);
-            if (excludeNonStandardConcepts) filters.push('sc is not null');
+            if (excludeNonStandardConcepts) filters.push('standard_concept is not null');
             sql = `
                     select *
                     from ${resultsSchema}.concept_info_stats
@@ -1174,6 +1109,64 @@ function conceptsOLD(cdm) {
   };
   cdm.remoteMethod('drugConceptCounts', { accepts, returns, accessType: 'READ', http: { verb: 'post' } });
   cdm.remoteMethod('drugConceptCounts', { accepts, returns, accessType: 'READ', http: { verb: 'get' } });
+
+  cdm.classRelations = function(..._params) {
+    var accepts = [].concat(schemaArgs, filterArgs, otherArgs);
+    const cb = _params.pop();
+    let params = toNamedParams(_params, classAccepts);
+    let domainFilt = '';
+    if (params.domain_id) {
+       //['Drug','Condition'].indexOf(params.domain_id) > -1  // checking elsewhere
+      // or maybe not yet, but should be
+      domainFilt = ` and domain_1='${params.domain_id}' and domain_2='${params.domain_id}' `;
+    }
+    let hierFilt = '';
+    switch (params.hierarchical) {
+      case 'is_hierarchical':
+        hierFilt = ` and is_hierarchical = '1' `;
+        break;
+      case 'defines_ancestry':
+        hierFilt = ` and defines_ancestry = '1' `;
+        break;
+      case 'both':
+        hierFilt = ` and is_hierarchical = '1' and defines_ancestry = '1' `;
+        break;
+      case 'either':
+        hierFilt = ` and (is_hierarchical = '1' or defines_ancestry = '1') `;
+        break;
+      case 'neither':
+        hierFilt = ` and is_hierarchical != '1' and defines_ancestry != '1'`;
+        break;
+    }
+
+    let sql = `
+                select
+                        is_hierarchical,
+                        defines_ancestry,
+                        same_vocab,
+                        sc_1,
+                        sc_2,
+                        vocab_1,
+                        vocab_2,
+                        class_1,
+                        class_2,
+                        relationship_id,
+                        sum(c1_ids) c1_ids,
+                        sum(c2_ids) c2_ids,
+                        sum(c) c
+                from ${params.resultsSchema}.class_relations
+                where invalid_1=false and invalid_2=false
+                  ${hierFilt}
+                  ${domainFilt}
+                  --and sc_2 is not null -- is this the right thing to do?
+                group by 1,2,3,4,5,6,7,8,9,10
+                order by 1,2,3,4,5,6,7,8,9,10
+              `;
+    runQuery(cdm, cb, sql, params);
+  };
+  cdm.remoteMethod('classRelations', { accepts:classAccepts, returns, accessType: 'READ', http: { verb: 'post' } });
+  cdm.remoteMethod('classRelations', { accepts:classAccepts, returns, accessType: 'READ', http: { verb: 'get' } });
+
 
 
 */
