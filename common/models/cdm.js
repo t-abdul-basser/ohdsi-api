@@ -229,7 +229,7 @@ function concepts(cdm) { // consolidating?
     }
     return filters;
   }
-  cdm.counts = function(..._params) {
+  cdm.concept_groups = function(..._params) {
     const cb = _params.pop();
     let params = toNamedParams(_params, schemaArgs);
     let sql = `
@@ -251,8 +251,29 @@ function concepts(cdm) { // consolidating?
     };
     runQuery(cdm, cb, sql, params, rowTransform);
   }
-  cdm.remoteMethod('counts', { accepts:schemaArgs, returns, accessType: 'READ', http: { verb: 'post' } });
-  cdm.remoteMethod('counts', { accepts:schemaArgs, returns, accessType: 'READ', http: { verb: 'get' } });
+  cdm.remoteMethod('concept_groups', { accepts:schemaArgs, returns, accessType: 'READ', http: { verb: 'post' } });
+  cdm.remoteMethod('concept_groups', { accepts:schemaArgs, returns, accessType: 'READ', http: { verb: 'get' } });
+
+  cdm.dcid_cnts_breakdown = function(..._params) {
+    const cb = _params.pop();
+    let params = toNamedParams(_params, schemaArgs);
+    let sql = `
+        select dcid_grp_id, cgids, grp, grpset, vals, dcc, drc_rowcnt, dtblcols,
+               drc, dsrc
+        from ${params.resultsSchema}.dcid_cnts_breakdown dg 
+        `;
+    let rowTransform = d => {
+        d.dcc = parseInt(d.dcc,10);
+        d.drc_rowcnt = parseInt(d.drc_rowcnt,10);
+        d.dtblcols = parseInt(d.dtblcols,10);
+        d.drc = parseInt(d.drc,10);
+        d.dsrc = parseInt(d.dsrc,10);
+        return d;
+    };
+    runQuery(cdm, cb, sql, params, rowTransform);
+  }
+  cdm.remoteMethod('dcid_cnts_breakdown', { accepts:schemaArgs, returns, accessType: 'READ', http: { verb: 'post' } });
+  cdm.remoteMethod('dcid_cnts_breakdown', { accepts:schemaArgs, returns, accessType: 'READ', http: { verb: 'get' } });
 
 
   cdm.conceptGroups = function(..._params) {
