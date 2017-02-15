@@ -900,7 +900,7 @@ function toNamedParams(p, accepts) {
   let params = {};
   accepts.forEach(arg => {
     let val = p.shift();
-    if (typeof val === 'undefined')
+    if (typeof val === 'undefined' || val === 'undefined')
       val = arg.default;
     if (arg.validCheck) {
       if (! arg.validCheck(val)) {
