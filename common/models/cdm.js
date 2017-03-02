@@ -67,7 +67,7 @@ function concepts(cdm) { // consolidating?
   cdm.conceptCounts = function(..._params) {
     var accepts = [].concat(schemaArgs, filterArgs, otherArgs);
     const cb = _params.pop();
-    let params = toNamedParams(_params, accepts);
+    let [params,req] = toNamedParams(_params, accepts);
     //console.log(params);
     let sql;
     sql = conceptSql(params);
@@ -80,7 +80,7 @@ function concepts(cdm) { // consolidating?
       sql = conceptSql(params);
     }
     */
-    runQuery(cdm, cb, sql, params);
+    runQuery(cdm, cb, req, sql, params);
   };
 
   cdm.remoteMethod('conceptCounts', { accepts, returns, accessType: 'READ', http: { verb: 'post' } });
@@ -231,7 +231,7 @@ function concepts(cdm) { // consolidating?
   }
   cdm.concept_groups = function(..._params) {
     const cb = _params.pop();
-    let params = toNamedParams(_params, schemaArgs);
+    let [params,req] = toNamedParams(_params, schemaArgs);
     let sql = `
         select cg.*
         from ${params.resultsSchema}.concept_groups cg 
@@ -249,37 +249,90 @@ function concepts(cdm) { // consolidating?
         d.grpset.forEach((fld,i) => d[fld] = d.vals[i]);
         return d;
     };
-    runQuery(cdm, cb, sql, params, rowTransform);
+    runQuery(cdm, cb, req, sql, params, rowTransform);
   }
   cdm.remoteMethod('concept_groups', { accepts:schemaArgs, returns, accessType: 'READ', http: { verb: 'post' } });
   cdm.remoteMethod('concept_groups', { accepts:schemaArgs, returns, accessType: 'READ', http: { verb: 'get' } });
 
-  cdm.dcid_cnts_breakdown = function(..._params) {
-    const cb = _params.pop();
-    let params = toNamedParams(_params, schemaArgs);
-    let sql = `
+  generateRemoteMethod({
+    apiName:'dcid_cnts_breakdown', cdm, returns,
+    accepts:schemaArgs,
+    sqlTemplate: params => `
         select dcid_grp_id, cgids, grp, grpset, vals, dcc, drc_rowcnt, dtblcols,
                drc, dsrc
         from ${params.resultsSchema}.dcid_cnts_breakdown dg 
-        `;
-    let rowTransform = d => {
+        `,
+    rowTransform: d => {
         d.dcc = parseInt(d.dcc,10);
         d.drc_rowcnt = parseInt(d.drc_rowcnt,10);
         d.dtblcols = parseInt(d.dtblcols,10);
         d.drc = parseInt(d.drc,10);
         d.dsrc = parseInt(d.dsrc,10);
         return d;
-    };
-    runQuery(cdm, cb, sql, params, rowTransform);
+    }});
+  generateRemoteMethod({
+    apiName:'relatedConcepts', cdm, returns,
+    accepts:schemaArgs.concat({arg: 'concept_id', type: 'number', required: true}),
+    sqlTemplate: params => `
+        select *
+        from ${params.resultsSchema}.ancestors
+        where ancestor_concept_id = ${params.concept_id}
+          or descendant_concept_id = ${params.concept_id}
+        `});
+  generateRemoteMethod({
+    apiName:'relatedConceptGroups', cdm, returns,
+    accepts:schemaArgs.concat({arg: 'concept_id', type: 'number', required: true}),
+    sqlTemplate: params => `
+        select  case when ancestor_concept_id = 201820 then 'ancestor rec' else 'descendant rec' end as role,
+                a_domain_id, a_standard_concept, a_vocabulary_id, a_concept_class_id,
+                d_domain_id, d_standard_concept, d_vocabulary_id, d_concept_class_id,
+                count(*), array_unique(array_agg(source)) sources
+        from ${params.resultsSchema}.ancestors
+        where ancestor_concept_id = ${params.concept_id}
+          or descendant_concept_id = ${params.concept_id}
+        group by 1,2,3,4,5,6,7,8,9
+        order by 1,2,3,4,5,6,7,8,9
+        `});
+  generateRemoteMethod({
+    apiName:'conceptRecord', cdm, returns,
+    accepts:schemaArgs.concat({arg: 'concept_id', type: 'number', required: true}),
+    sqlTemplate: params => `
+        select *
+        from ${params.cdmSchema}.concept
+        where concept_id = ${params.concept_id}
+        `});
+
+  let conceptInfoAccepts = [].concat(schemaArgs, {arg: 'concept_id', type: 'number', required: true});
+  cdm.conceptInfo = function(..._params) {
+    const cb = _params.pop();
+    //console.log('conceptInfo params', _params);
+    //console.log('conceptInfoAccepts', conceptInfoAccepts);
+    let conceptGroups = cdm.relatedConceptGroups(..._params.concat(null));
+              //let relatedConceptCount _.sum(rows.map(d=>parseInt(d.count,10)));
+    let relatedConcepts = cdm.relatedConcepts(..._params.concat(null))
+      .then(({err, rows, apiName, url, cdm, sql, params, })=>{
+        console.log('in relatedConcepts.then', rows.length);
+        return {err, rows: rows && rows.slice(0,2), 
+                apiName, url, cdm, sql, params, };
+      })
+    let promises = [relatedConcepts, conceptGroups,
+                    cdm.conceptRecord(..._params.concat(null))
+                    ];
+    //console.log('conceptInfo', cb, promises);
+    return multipleResultSets(cb, promises)
   }
-  cdm.remoteMethod('dcid_cnts_breakdown', { accepts:schemaArgs, returns, accessType: 'READ', http: { verb: 'post' } });
-  cdm.remoteMethod('dcid_cnts_breakdown', { accepts:schemaArgs, returns, accessType: 'READ', http: { verb: 'get' } });
+  cdm.remoteMethod('conceptInfo', { accepts:conceptInfoAccepts, returns, accessType: 'READ', http: { verb: 'post' } });
+  cdm.remoteMethod('conceptInfo', { accepts:conceptInfoAccepts, returns, accessType: 'READ', http: { verb: 'get' } });
+
+
+
 
 
   cdm.conceptGroups = function(..._params) {
+    throw new Error("not sure if conceptGroups still being used");
     //var accepts = [].concat(schemaArgs, filterArgs, otherArgs);
     const cb = _params.pop();
-    let params = toNamedParams(_params, classAccepts);
+    let [params,req] = toNamedParams(_params, classAccepts);
     let filters = [], vals = [];
     // FIX SQL INJECT PROBLEM!!! (use query params)
     filters = ['domain_id','standard_concept','vocabulary_id',
@@ -327,12 +380,11 @@ function concepts(cdm) { // consolidating?
         d.grpset.forEach((fld,i) => d[fld] = d.vals[i]);
         return d;
     };
-    runQuery(cdm, cb, sql, params, rowTransform, true);
+    runQuery(cdm, cb, req, sql, params, rowTransform, true);
   };
   console.log('registering conceptGroups');
   cdm.remoteMethod('conceptGroups', { accepts:classAccepts, returns, accessType: 'READ', http: { verb: 'post' } });
   cdm.remoteMethod('conceptGroups', { accepts:classAccepts, returns, accessType: 'READ', http: { verb: 'get' } });
-  var returns = { arg: 'data', type: ['cdm'], root: true };
 }
 function sampleUsers(cdm) {
   var returns = { arg: 'data', type: ['cdm'], root: true };
@@ -875,27 +927,6 @@ function cacheDirty(cdm) {
     http: { verb: 'get' }
   });
 }
-function runQuery(cdm, cb, sql, params, rowTransform=d=>d, logRequest) {
-  var ds = cdm.dataSource;
-  var url = `\nurl ---> ${cdm.app.get('url').replace(/\/$/, '') + params.req.url}\n`;
-  delete params.req;
-  if (logRequest)
-    console.log('==============>\nRequest:\n', params, sql, 
-                  url, '\n<==============\n');
-  ds.connector.query(sql, [], function(err, rows) {
-    if (err) {
-      console.error('==============>\nRequest Error:\n', err, params, sql, 
-                        url, '\n<==============\n');
-      cb(err, []);
-    } else {
-      console.log('==============>\nResponse:\n', params, sql, `${rows.length} rows`, 
-                        url, '\n<==============\n');
-      //console.warn("TRUNCATING TO 1000 ROWS!!! FIX THIS (with pagination?)!!!");
-      //cb(err, rows.slice(0,1000));
-      cb(err, rows.map(rowTransform));
-    }
-  });
-}
 function toNamedParams(p, accepts) {
   let params = {};
   accepts.forEach(arg => {
@@ -909,7 +940,9 @@ function toNamedParams(p, accepts) {
     }
     params[arg.arg] = val;
   })
-  return params;
+  let req = params.req;
+  delete params.req;
+  return [params,req];
 }
 
 /*
@@ -1116,7 +1149,7 @@ function conceptsOLD(cdm) {
     const cb = _params.pop();
     let params = toNamedParams(_params, accepts);
     let sql = drugConceptSql(params, 'target_agg');
-    runQuery(cdm, cb, sql, params);
+    runQuery(cdm, cb, req, sql, params);
   };
   cdm.remoteMethod('drugConceptAgg', { accepts, returns, accessType: 'READ', http: { verb: 'post' } });
   cdm.remoteMethod('drugConceptAgg', { accepts, returns, accessType: 'READ', http: { verb: 'get' } });
@@ -1126,7 +1159,7 @@ function conceptsOLD(cdm) {
     const cb = _params.pop();
     let params = toNamedParams(_params, accepts);
     let sql = drugConceptSql(params, 'counts');
-    runQuery(cdm, cb, sql, params);
+    runQuery(cdm, cb, req, sql, params);
   };
   cdm.remoteMethod('drugConceptCounts', { accepts, returns, accessType: 'READ', http: { verb: 'post' } });
   cdm.remoteMethod('drugConceptCounts', { accepts, returns, accessType: 'READ', http: { verb: 'get' } });
@@ -1183,7 +1216,7 @@ function conceptsOLD(cdm) {
                 group by 1,2,3,4,5,6,7,8,9,10
                 order by 1,2,3,4,5,6,7,8,9,10
               `;
-    runQuery(cdm, cb, sql, params);
+    runQuery(cdm, cb, req, sql, params);
   };
   cdm.remoteMethod('classRelations', { accepts:classAccepts, returns, accessType: 'READ', http: { verb: 'post' } });
   cdm.remoteMethod('classRelations', { accepts:classAccepts, returns, accessType: 'READ', http: { verb: 'get' } });
@@ -1191,3 +1224,70 @@ function conceptsOLD(cdm) {
 
 
 */
+
+
+function runQuery(cdm, cb, req, sql, params, rowTransform=d=>d, logRequest, apiName='missingApiName') {
+  var ds = cdm.dataSource;
+  params = _.clone(params);
+  //console.log(apiName, params, sql);
+  var url = `\nurl ---> ${cdm.app.get('url').replace(/\/$/, '') + req.url}\n`;
+  if (logRequest)
+    console.log('==============>\nRequest:\n', apiName, params, sql, url, '\n<==============\n');
+  if (cb) {
+    //console.log('in runQuery, cb is', typeof cb, cb);
+    return ds.connector.query(sql, [], function(err, rows) { 
+              //console.log('in runQuery response, cb is', typeof cb);
+              logResponse(cb, err, rows, apiName, sql, url, params, rowTransform, logRequest);
+              cb(err, rows && rows.map(rowTransform));
+            });
+  }
+  return new Promise(function(resolve, reject) {
+    ds.connector.query(sql, [], function(err, rows) { 
+      //console.log('finished query');
+      if (err) {
+        console.log("error in promise, don't care", err);
+        reject(err);
+      }
+      //console.log('resolving with', {err,rows});
+      logResponse(cb, err, rows, apiName, sql, url, params, rowTransform, logRequest);
+      resolve({err, rows:rows.map(rowTransform), url, cdm, sql, params, rowTransform, logRequest, apiName});
+    });
+  });
+}
+function logResponse(cb, err, rows, apiName, sql, url, params, rowTransform, logRequest) {
+  if (err) {
+    console.error('==============>\nRequest Error:\n', err, params, sql, 
+                      url, '\n<==============\n');
+  } else {
+    console.log('==============>\nResponse:\n', 
+                {apiName, params, rows:rows.length, }, 
+                url, sql, '\n<==============\n');
+  }
+}
+function multipleResultSets(cb, promises) {
+  return Promise.all(promises).then(resultSets=>{
+    let allResults = _.fromPairs(
+        resultSets.map(
+          ({err, rows, apiName, url, cdm, sql, params, })=>{
+            if (err) {
+              console.error('problem with resultSet in ', apiName, url);
+            } else {
+              return [apiName,rows];
+            }
+          }));
+    cb(null, allResults);
+  });
+}
+
+function generateRemoteMethod({apiName, cdm, accepts, returns, sqlTemplate, rowTransform}={}) {
+  cdm[apiName] = function(..._params) {
+    const cb = _params.slice(_params.length-1)[0];
+    let [params,req] = toNamedParams(_params.slice(0,_params.length-1), accepts);
+    let promise = runQuery(cdm, cb, req, sqlTemplate(params), params, rowTransform, false, apiName);
+    return promise;
+  }
+  cdm.remoteMethod(apiName, {accepts, returns, accessType: 'READ', http: { verb: 'post' } });
+  cdm.remoteMethod(apiName, {accepts, returns, accessType: 'READ', http: { verb: 'get' } });
+}
+
+
