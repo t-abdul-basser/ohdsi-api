@@ -13,6 +13,7 @@ function concepts(cdm) { // consolidating?
   const schemaArgs = [
     {arg: 'cdmSchema', type: 'string', required: true },
     {arg: 'resultsSchema', type: 'string', required: true},
+    //{arg: 'rowLimit', type: 'integer', required: false},
     {arg: 'req', type: 'object', http: { source: 'req' }},
   ];
   const filterArgs = [
@@ -271,7 +272,7 @@ function concepts(cdm) { // consolidating?
         return d;
     }});
   generateRemoteMethod({
-    apiName:'relatedConcepts', cdm, returns,
+    apiName:'relatedConceptsA', cdm, returns,
     accepts:schemaArgs.concat({arg: 'concept_id', type: 'number', required: true}),
     sqlTemplate: params => `
         select *
@@ -280,51 +281,150 @@ function concepts(cdm) { // consolidating?
           or descendant_concept_id = ${params.concept_id}
         `});
   generateRemoteMethod({
-    apiName:'relatedConceptGroups', cdm, returns,
+    apiName:'relatedConceptGroupsA', cdm, returns,
     accepts:schemaArgs.concat({arg: 'concept_id', type: 'number', required: true}),
     sqlTemplate: params => `
-        select  case when ancestor_concept_id = 201820 then 'ancestor rec' else 'descendant rec' end as role,
+        select  case when ancestor_concept_id = ${params.concept_id} then 'ancestor rec' else 'descendant rec' end as role,
                 a_domain_id, a_standard_concept, a_vocabulary_id, a_concept_class_id,
                 d_domain_id, d_standard_concept, d_vocabulary_id, d_concept_class_id,
-                count(*), array_unique(array_agg(source)) sources
+                count(*) cc, array_unique(array_agg(source)) sources
         from ${params.resultsSchema}.ancestors
         where ancestor_concept_id = ${params.concept_id}
           or descendant_concept_id = ${params.concept_id}
         group by 1,2,3,4,5,6,7,8,9
         order by 1,2,3,4,5,6,7,8,9
-        `});
+        `,
+    rowTransform: d => {
+        d.cc = parseInt(d.cc,10);
+        return d;
+    }});
   generateRemoteMethod({
     apiName:'conceptRecord', cdm, returns,
+    singleRow: true,
     accepts:schemaArgs.concat({arg: 'concept_id', type: 'number', required: true}),
     sqlTemplate: params => `
         select *
         from ${params.cdmSchema}.concept
         where concept_id = ${params.concept_id}
         `});
+  generateRemoteMethod({
+    apiName:'childConcepts', cdm, returns,
+    accepts:schemaArgs.concat({arg: 'concept_id', type: 'number', required: true}),
+    sqlTemplate: params => `
+        select  distinct
+                r.defines_ancestry, r.is_hierarchical, r.relationship_name, c.concept_id, 
+                c.concept_code, c.concept_name, 
+                c.standard_concept sc, c.domain_id, c.vocabulary_id, c.concept_class_id
+        from ${params.cdmSchema}.concept_relationship cr
+        join ${params.cdmSchema}.concept c on cr.concept_id_2 = c.concept_id
+        join ${params.resultsSchema}.one_way_relationships r on cr.relationship_id=r.relationship_id
+        where cr.concept_id_1 = ${params.concept_id}
+        and   cr.invalid_reason is null
+        order by 3, sc, domain_id, vocabulary_id
+        `,
+    rowTransform: d => {
+        d.defines_ancestry = d.defines_ancestry === '1' ? true : false;
+        d.is_hierarchical = d.is_hierarchical === '1' ? true : false;
+        return d;
+    }});
+  generateRemoteMethod({
+    apiName:'childConceptGroups', cdm, returns,
+    accepts:schemaArgs.concat({arg: 'concept_id', type: 'number', required: true}),
+    sqlTemplate: params => `
+        select r.defines_ancestry, r.is_hierarchical, r.relationship_name, 
+                c.standard_concept sc, c.domain_id, c.vocabulary_id, c.concept_class_id,
+                count(distinct c.concept_id) as cc
+        from ${params.cdmSchema}.concept_relationship cr
+        join ${params.cdmSchema}.concept c on cr.concept_id_2 = c.concept_id
+        join ${params.resultsSchema}.one_way_relationships r on cr.relationship_id=r.relationship_id
+        where cr.concept_id_1 = ${params.concept_id}
+        and   cr.invalid_reason is null
+        group by 1,2,3,4,5,6,7
+        order by 3, sc, domain_id, vocabulary_id
+        `,
+    rowTransform: d => {
+        d.defines_ancestry = d.defines_ancestry === '1' ? true : false;
+        d.is_hierarchical = d.is_hierarchical === '1' ? true : false;
+        d.cc = parseInt(d.cc,10);
+        return d;
+    }});
+  generateRemoteMethod({
+    apiName:'parentConcepts', cdm, returns,
+    accepts:schemaArgs.concat({arg: 'concept_id', type: 'number', required: true}),
+    sqlTemplate: params => `
+        select  distinct
+                r.defines_ancestry, r.is_hierarchical, r.relationship_name, c.concept_id, 
+                c.concept_code, c.concept_name, 
+                c.standard_concept sc, c.domain_id, c.vocabulary_id, c.concept_class_id
+        from ${params.cdmSchema}.concept_relationship cr
+        join ${params.cdmSchema}.concept c on cr.concept_id_1 = c.concept_id
+        join ${params.resultsSchema}.one_way_relationships r on cr.relationship_id=r.relationship_id
+        where cr.concept_id_2 = ${params.concept_id}
+        and   cr.invalid_reason is null
+        order by 3, sc, domain_id, vocabulary_id;
+        `,
+    rowTransform: d => {
+        d.defines_ancestry = d.defines_ancestry === '1' ? true : false;
+        d.is_hierarchical = d.is_hierarchical === '1' ? true : false;
+        return d;
+    }});
+  generateRemoteMethod({
+    apiName:'parentConceptGroups', cdm, returns,
+    accepts:schemaArgs.concat({arg: 'concept_id', type: 'number', required: true}),
+    sqlTemplate: params => `
+        select r.defines_ancestry, r.is_hierarchical, r.relationship_name, 
+                c.standard_concept sc, c.domain_id, c.vocabulary_id, c.concept_class_id,
+                count(distinct c.concept_id) cc
+        from ${params.cdmSchema}.concept_relationship cr
+        join ${params.cdmSchema}.concept c on cr.concept_id_1 = c.concept_id
+        join ${params.resultsSchema}.one_way_relationships r on cr.relationship_id=r.relationship_id
+        where cr.concept_id_2 = ${params.concept_id}
+        and   cr.invalid_reason is null
+        group by 1,2,3,4,5,6,7
+        order by 3, sc, domain_id, vocabulary_id
+        `,
+    rowTransform: d => {
+        d.defines_ancestry = d.defines_ancestry === '1' ? true : false;
+        d.is_hierarchical = d.is_hierarchical === '1' ? true : false;
+        d.cc = parseInt(d.cc,10);
+        return d;
+    }});
 
   let conceptInfoAccepts = [].concat(schemaArgs, {arg: 'concept_id', type: 'number', required: true});
   cdm.conceptInfo = function(..._params) {
     const cb = _params.pop();
     //console.log('conceptInfo params', _params);
     //console.log('conceptInfoAccepts', conceptInfoAccepts);
-    let conceptGroups = cdm.relatedConceptGroups(..._params.concat(null));
+    let conceptGroupsA = cdm.relatedConceptGroupsA(..._params.concat(null));
               //let relatedConceptCount _.sum(rows.map(d=>parseInt(d.count,10)));
-    let relatedConcepts = cdm.relatedConcepts(..._params.concat(null))
-      .then(({err, rows, apiName, url, cdm, sql, params, })=>{
-        console.log('in relatedConcepts.then', rows.length);
-        return {err, rows: rows && rows.slice(0,2), 
-                apiName, url, cdm, sql, params, };
-      })
-    let promises = [relatedConcepts, conceptGroups,
-                    cdm.conceptRecord(..._params.concat(null))
+    let relatedConceptsA = cdm.relatedConceptsA(..._params.concat(null))
+                                .then(d=>rowLimit(d,5));
+    let parentConceptGroups = cdm.parentConceptGroups(..._params.concat(null));
+    let parentConceptCount = parentConceptGroups.then(
+      ({rows,apiName}={}) => {return {rows:_.sum(rows.map(d=>d.cc)), apiName:'parentConceptCount'}});
+    let childConceptGroups = cdm.childConceptGroups(..._params.concat(null));
+    let childConceptCount = childConceptGroups.then(
+      ({rows,apiName}={}) => {return {rows:_.sum(rows.map(d=>d.cc)), apiName:'childConceptCount'}});
+
+    let promises = [relatedConceptsA, conceptGroupsA,
+                    cdm.conceptRecord(..._params.concat(null)),
+                    cdm.parentConcepts(..._params.concat(null)).then(d=>rowLimit(d,30)),
+                    cdm.childConcepts(..._params.concat(null)).then(d=>rowLimit(d,30)),
+                    cdm.parentConceptGroups(..._params.concat(null)),
+                    cdm.childConceptGroups(..._params.concat(null)),
+                    parentConceptCount, childConceptCount,
                     ];
     //console.log('conceptInfo', cb, promises);
-    return multipleResultSets(cb, promises)
+    multipleResultSets(cb, promises)
   }
   cdm.remoteMethod('conceptInfo', { accepts:conceptInfoAccepts, returns, accessType: 'READ', http: { verb: 'post' } });
   cdm.remoteMethod('conceptInfo', { accepts:conceptInfoAccepts, returns, accessType: 'READ', http: { verb: 'get' } });
 
-
+function rowLimit(p, limit) {
+  let {err, rows, apiName, url, cdm, sql, params, } = p;
+  return {err, rows: rows && rows.slice(0,limit), 
+          apiName, url, cdm, sql, params, };
+}
 
 
 
@@ -1226,11 +1326,12 @@ function conceptsOLD(cdm) {
 */
 
 
-function runQuery(cdm, cb, req, sql, params, rowTransform=d=>d, logRequest, apiName='missingApiName') {
+function runQuery(cdm, cb, req, sql, params, rowTransform=d=>d, logRequest, apiName='missingApiName', singleRow) {
   var ds = cdm.dataSource;
   params = _.clone(params);
+  //console.log('URLs', cdm.app.get('url'), req.url,  req.baseUrl, req.originalUrl, req._parsedUrl, req.params, req.query);
   //console.log(apiName, params, sql);
-  var url = `\nurl ---> ${cdm.app.get('url').replace(/\/$/, '') + req.url}\n`;
+  var url = `\nurl ---> ${cdm.app.get('url').replace(/\/$/, '') + req.originalUrl}\n`;
   if (logRequest)
     console.log('==============>\nRequest:\n', apiName, params, sql, url, '\n<==============\n');
   if (cb) {
@@ -1238,19 +1339,41 @@ function runQuery(cdm, cb, req, sql, params, rowTransform=d=>d, logRequest, apiN
     return ds.connector.query(sql, [], function(err, rows) { 
               //console.log('in runQuery response, cb is', typeof cb);
               logResponse(cb, err, rows, apiName, sql, url, params, rowTransform, logRequest);
-              cb(err, rows && rows.map(rowTransform));
+              if (!rows) {
+                cb(err, null);
+                return;
+              }
+              if (singleRow && rows.length > 1) {
+                throw new Error("expected single row");
+              }
+              let result = rows.map(rowTransform);
+              if (singleRow) {
+                if (rows.length === 1)
+                  cb(err, result[0]);
+                cb(err, null);
+                return;
+              }
+              cb(err, result);
             });
   }
   return new Promise(function(resolve, reject) {
-    ds.connector.query(sql, [], function(err, rows) { 
+    //console.log('promise for', apiName);
+    return ds.connector.query(sql, [], function(err, rows) { 
       //console.log('finished query');
       if (err) {
         console.log("error in promise, don't care", err);
         reject(err);
       }
-      //console.log('resolving with', {err,rows});
+      //console.log('resolving', apiName, 'with', err,rows.length);
       logResponse(cb, err, rows, apiName, sql, url, params, rowTransform, logRequest);
-      resolve({err, rows:rows.map(rowTransform), url, cdm, sql, params, rowTransform, logRequest, apiName});
+      if (singleRow && rows.length > 1) {
+        reject("expected single row");
+      }
+      let result = rows.map(rowTransform);
+      if (singleRow) {
+        result = result.length ? result[0] : null;
+      }
+      resolve({err, rows:result, url, cdm, sql, params, rowTransform, logRequest, apiName});
     });
   });
 }
@@ -1265,8 +1388,9 @@ function logResponse(cb, err, rows, apiName, sql, url, params, rowTransform, log
   }
 }
 function multipleResultSets(cb, promises) {
-  return Promise.all(promises).then(resultSets=>{
-    let allResults = _.fromPairs(
+  return Promise.all(promises).then(
+    resultSets=>{
+      let allResults = _.fromPairs(
         resultSets.map(
           ({err, rows, apiName, url, cdm, sql, params, })=>{
             if (err) {
@@ -1275,15 +1399,19 @@ function multipleResultSets(cb, promises) {
               return [apiName,rows];
             }
           }));
-    cb(null, allResults);
-  });
+      cb(null, allResults);
+    },
+    (err,...other) => {
+      console.error('ERROR', err, other);
+    }
+  );
 }
 
-function generateRemoteMethod({apiName, cdm, accepts, returns, sqlTemplate, rowTransform}={}) {
+function generateRemoteMethod({apiName, cdm, accepts, returns, sqlTemplate, rowTransform, singleRow}={}) {
   cdm[apiName] = function(..._params) {
     const cb = _params.slice(_params.length-1)[0];
     let [params,req] = toNamedParams(_params.slice(0,_params.length-1), accepts);
-    let promise = runQuery(cdm, cb, req, sqlTemplate(params), params, rowTransform, false, apiName);
+    let promise = runQuery(cdm, cb, req, sqlTemplate(params), params, rowTransform, false, apiName, singleRow);
     return promise;
   }
   cdm.remoteMethod(apiName, {accepts, returns, accessType: 'READ', http: { verb: 'post' } });
