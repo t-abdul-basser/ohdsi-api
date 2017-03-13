@@ -383,30 +383,24 @@ function concepts(cdm) { // consolidating?
                 r.relationship_name,
                 r.reverse_relationship_id,
 
-                rc.domain_id,
-                rc.standard_concept,
-                rc.vocabulary_id,
-                rc.concept_class_id,
+                c.domain_id,
+                c.standard_concept,
+                c.vocabulary_id,
+                c.concept_class_id,
 
-                rc.concept_id,
-                rc.concept_code,
-                rc.concept_name,
-
-                rc.tbl,
-                rc.col,
-                rc.coltype,
-                rc.rc::integer,
-                rc.src::integer,
-                rc.crc::integer
+                c.concept_id,
+                c.concept_code,
+                c.concept_name
 
                 from ${p.cdmSchema}.concept_relationship cr
                 join ${p.cdmSchema}.relationship r 
                       on cr.relationship_id=r.relationship_id
-                join ${p.resultsSchema}.record_counts rc 
-                      on cr.concept_id_2 = rc.concept_id
+                join ${p.cdmSchema}.concept c 
+                      on cr.concept_id_2 = c.concept_id
 
                 where cr.concept_id_1 = $1
                   and cr.invalid_reason is null
+                  and cr.concept_id_2 != cr.concept_id_1
                   ${p.maps === true && "and cr.relationship_id in ('Maps to','Mapped from')"||''}
                   ${p.maps === false && "and cr.relationship_id not in ('Maps to','Mapped from')"||''}
 
@@ -432,31 +426,24 @@ function concepts(cdm) { // consolidating?
                 r.relationship_name,
                 r.reverse_relationship_id,
 
-                rc.domain_id,
-                rc.standard_concept,
-                rc.vocabulary_id,
-                rc.concept_class_id,
+                c.domain_id,
+                c.standard_concept,
+                c.vocabulary_id,
+                c.concept_class_id,
 
-                rc.tbl,
-                rc.col,
-                rc.coltype,
-
-                count(distinct rc.concept_id)::integer cc,
-                count(distinct case when rc.tbl='' then null else tbl||col end)::integer tblcols,
-                sum(rc.rc)::integer rc,
-                sum(rc.src)::integer src,
-                sum(rc.crc)::integer crc
+                count(distinct c.concept_id)::integer cc
 
                 from ${params.cdmSchema}.concept_relationship cr
                 join ${params.cdmSchema}.relationship r 
                       on cr.relationship_id=r.relationship_id
-                join ${params.resultsSchema}.record_counts rc 
-                      on cr.concept_id_2 = rc.concept_id
+                join ${params.cdmSchema}.concept c 
+                      on cr.concept_id_2 = c.concept_id
 
                 where cr.concept_id_1 = ${params.concept_id}
                   and cr.invalid_reason is null
+                  and cr.concept_id_2 != cr.concept_id_1
 
-                group by 1,2,3,4,5,6,7,8,9,10,11,12
+                group by 1,2,3,4,5,6,7,8,9
                 order by relationship_name, domain_id, standard_concept,
                           vocabulary_id, concept_class_id
           `,
