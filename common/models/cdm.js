@@ -325,7 +325,6 @@ function concepts(cdm) { // consolidating?
     }});
   generateRemoteMethod({
     apiName:'conceptRecord', cdm, returns,
-    //singleRow: true,
     accepts:schemaArgs.concat( {arg: 'concept_id', type: 'number', required: true}),
     sqlTemplate: params => `
         select  concept_id,
@@ -345,8 +344,7 @@ function concepts(cdm) { // consolidating?
         `,
         //where ${ typeof params.concept_id !== 'undefined' && 'concept_id = $1' || params.concept_code && 'concept_code = $1' || 'null = $1' }
     qpFunc: p => [p.concept_id],
-      //[ typeof p.concept_id !== 'undefined' && p.concept_id || p.concept_code],
-    //rowTransform: d => { d.rc = parseInt(d.rc,10); d.src = parseInt(d.src,10); return d; }
+    resultsTransform: d => d && d[0] || null,
   });
   generateRemoteMethod({
     apiName:'conceptRecordsFromCode', cdm, returns,
@@ -458,47 +456,25 @@ function concepts(cdm) { // consolidating?
     }});
 
   let conceptInfoAccepts = [].concat(schemaArgs, 
-          {arg: 'concept_id', type: 'number', required: false},
-          {arg: 'concept_code', type: 'string', required: false},
-          {arg: 'maps', type: 'boolean', required: false}
+          {arg: 'concept_id', type: 'number', required: true},
+          {arg: 'maps', type: 'boolean', required: false} // what related stuff to fetch?
   );
   cdm.conceptInfo = function(..._params) {
     const cb = _params.pop();
     //console.log('conceptInfo params', _params);
     //console.log('conceptInfoAccepts', conceptInfoAccepts);
     let [params,req] = toNamedParams(_params, conceptInfoAccepts);
-    console.log("about to run conceptRecord with", _.keys(params));
-    console.log('req', req && _.keys(req));
-    let recPromise;
-    let lookup;
     let source = 'calledFromMethod';
-    if (typeof params.concept_id !== 'undefined') {
-      lookup = 'concept_id';
-      recPromise = cdm.conceptRecord(source, params, cb, req);
-    } else if (params.concept_code) {
-      lookup = 'concept_code';
-      recPromise = cdm.conceptRecordsFromCode(source, params, cb, req);
-    } else {
-      cb("need concept_id or concept_code", null);
-    }
+    let recPromise = cdm.conceptRecord(source, params, cb, req);
     recPromise.then(
-      ({err, rows, } = {}) => {
-        console.log("got something back from concept record: ", rows);
-        if (lookup === 'concept_code') {
-          if (rows.length > 1) {
-            cb(err, rows);
-            return;
-          }
-        }
-        if (_.isEmpty(rows)) {
+      rec => {
+        //console.log("got something back from concept record: ", rec);
+        if (_.isEmpty(rec)) {
           console.log("no record for", _.pickBy(params, (v,k)=>k!=='req'));
-          cb(err, []);
+          cb(null, null);
+          //cb("no record for " + params.concept_id, rec);
           return;
         }
-        if (rows.length !== 1) {
-          console.error("something weird", rows);
-        }
-        let rec = rows[0];
         params.concept_id = rec.concept_id;
         //console.log("about to run relatedConcepts with", _.keys(params));
         let relatedConcepts = cdm.relatedConcepts(source,params,cb,req).then(d=>rowLimit(d,100));
@@ -536,6 +512,8 @@ function concepts(cdm) { // consolidating?
       },
       ({err, rows, } = {}) => {
         console.log("got error back from concept record", err, rows);
+        cb(err||null, rows||null);
+        //throw new Error("got error back from concept record", err, rows);
       });
   }
   cdm.remoteMethod('conceptInfo', { accepts:conceptInfoAccepts, returns, accessType: 'READ', http: { verb: 'post' } });
@@ -549,13 +527,6 @@ function concepts(cdm) { // consolidating?
       {arg: 'col', type: 'string', required: true},
       {arg: 'rowLimit', type: 'number', required: false}
     ),
-    //singleRow: true,
-    /*
-    resultsTransform: d=>{
-      //console.log('d.json_array', d.json_array.length);
-      return d.json_array;
-    },
-    */
     rowTransform: d=>d.rec,
     sqlTemplate: params => `
         select dsql as rec
@@ -1468,7 +1439,7 @@ function conceptsOLD(cdm) {
 
 
 function runQuery(cdm, cb, req, sql, params, rowTransform=d=>d, logRequest, 
-                  apiName='missingApiName', singleRow, qpFunc) {
+                  apiName='missingApiName', qpFunc) {
   var ds = cdm.dataSource;
   params = _.clone(params);
   //console.log('URLs', cdm.app.get('url'), req.url,  req.baseUrl, req.originalUrl, req._parsedUrl, req.params, req.query);
@@ -1481,7 +1452,7 @@ function runQuery(cdm, cb, req, sql, params, rowTransform=d=>d, logRequest,
     console.log('in runQuery, cb is', typeof cb, cb);
     return ds.connector.query(sql, queryParams, function(err, rows) { 
       if (err) {
-        console.log("query error in promise", err);
+        console.log("calling cb with query error", err);
         cb(err, null);
         return;
       }
@@ -1490,15 +1461,6 @@ function runQuery(cdm, cb, req, sql, params, rowTransform=d=>d, logRequest,
         console.error("how could this happen?", rows);
       }
       let result = rows.map(rowTransform);
-      /*
-      if (singleRow) {
-        if (rows.length > 1) {
-          cb("expected a single row", []);
-          return;
-        }
-        result = result.length ? result[0] : null;
-      }
-      */
       cb(err, result);
     });
   }
@@ -1506,31 +1468,23 @@ function runQuery(cdm, cb, req, sql, params, rowTransform=d=>d, logRequest,
     console.log('promise for', apiName);
     return ds.connector.query(sql, queryParams, function(err, rows) { 
       //console.log('finished query');
+      logResponse(null, err, rows, apiName, sql, url, params, rowTransform, logRequest, queryParams);
       if (err) {
         console.log("query error in promise", err);
         reject({err, rows, url, cdm, sql, params, rowTransform, logRequest, apiName});
+        return;
       }
       //console.log('resolving', apiName, 'with', err,rows.length);
-      logResponse(null, err, rows, apiName, sql, url, params, rowTransform, logRequest, queryParams);
       if (!Array.isArray(rows)) {
         console.error("how could this happen?", rows);
       }
       let result = rows.map(rowTransform);
-      //console.log('rows', rows);
-      //console.log('result', result);
-      /*
-      if (singleRow) {
-        if (rows.length > 1) {
-          reject({err:"expected a single row", rows, url, cdm, sql, params, rowTransform, logRequest, apiName});
-        }
-        result = result.length ? result[0] : [];
-      }
-      */
       resolve({err, rows:result, url, cdm, sql, params, rowTransform, logRequest, apiName});
     });
   });
 }
 function logResponse(cb, err, rows, apiName, sql, url, params, rowTransform, logRequest, queryParams) {
+  sql = sql.replace(/\$(\d+)/g, (match,p1)=>queryParams[p1-1]);
   if (err) {
     console.error('==============>\nRequest Error:\n', err, params, sql, 
                       url, '\n<==============\n');
@@ -1561,15 +1515,15 @@ function multipleResultSets(cb, promises) {
 }
 
 function generateRemoteMethod({apiName, cdm, accepts, returns, 
-                              sqlTemplate, rowTransform, singleRow,
+                              sqlTemplate, rowTransform,
                               resultsTransform, qpFunc}={}) {
   cdm[apiName] = function(..._params) {
     let source, params, cb, req, resultsOnly=true;
-    //if (apiName === 'conceptRecord') { //console.log('conceptRecord _params', _params); //console.log('conceptRecord accepts', accepts); }
     if (_params[0] === 'calledFromMethod') {
-      console.log("got calledFromMethod");
+      //console.log("got calledFromMethod");
+      if (!resultsOnly) throw new Error("can't remember what resultsOnly is for", _params);
       [source, params, cb, req, resultsOnly] = _params;
-      console.log({source, params, cb, resultsOnly});
+      //console.log({source, params, cb, resultsOnly});
       //console.log("got object _params", _.keys(params), 'for', apiName);
     } else {
       cb = _params.slice(_params.length-1)[0];
@@ -1578,28 +1532,28 @@ function generateRemoteMethod({apiName, cdm, accepts, returns,
     }
     let queryError;
     let promise = runQuery(cdm, null, req, sqlTemplate(params), params, 
-                            rowTransform, false, apiName, singleRow, 
+                            rowTransform, false, apiName,
                             qpFunc)
                     .then(p => {
-                            //console.log(apiName, 'result', p)
-                            return resultsOnly ? p.rows : p;
+                            //console.log("in genrem promise then", apiName, 'result', p)
+                            return resultsOnly ? (p.rows || null) : p;
                           },
                           ({err, rows} = {}) => {
                             console.error("genRemMeth got problem back from runQuery", err, rest);
-                            cb(err, rows);
+                            return err;
+                            //cb(err, rows);
                             queryError = err;
                           });
-    if (queryError) return;
+    if (queryError) {
+      console.log("weird stuff");
+    }
 
     if (resultsTransform) {
-      promise.then(
-        ({err, rows, } = {}) => {
-        //console.log('results', rows);
-        let r = resultsTransform(rows);
-        //console.log('transformed results', r.slice(0,5));
-        cb(err, r);
-      });
-      return;
+      return promise.then(
+        p => {
+          //console.log('resultsTransform got ', p.rows || p);
+          return resultsTransform(p.rows || p);
+        });
     }
     return promise;
   }
