@@ -437,6 +437,7 @@ function concepts(cdm) { // consolidating?
                       on cr.relationship_id=r.relationship_id
                 join ${params.cdmSchema}.concept c 
                       on cr.concept_id_2 = c.concept_id
+                         and c.invalid_reason is null
 
                 where cr.concept_id_1 = ${params.concept_id}
                   and cr.invalid_reason is null
