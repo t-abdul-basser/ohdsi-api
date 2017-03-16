@@ -277,19 +277,19 @@ function concepts(cdm) { // consolidating?
     sqlTemplate: params => `
         select *
         from ${params.resultsSchema}.ancestors
-        where descendant_concept_id = ${params.concept_id}
+        where d_concept_id = ${params.concept_id}
         `});
   generateRemoteMethod({
     apiName:'conceptAncestorGroups', cdm, returns,
     accepts:schemaArgs.concat({arg: 'concept_id', type: 'number', required: true}),
     sqlTemplate: params => `
-        select  case when ancestor_concept_id = ${params.concept_id} then 'ancestor rec' else 'descendant rec' end as role,
+        select  case when a_concept_id = ${params.concept_id} then 'ancestor rec' else 'descendant rec' end as role,
                 a_domain_id, a_standard_concept, a_vocabulary_id, a_concept_class_id,
                 d_domain_id, d_standard_concept, d_vocabulary_id, d_concept_class_id,
                 count(*) cc, 
-                array_unique(array_agg(min_levels_of_separation)) min_levels
+                ${params.resultsSchema}.array_unique(array_agg(min_levels_of_separation)) min_levels
         from ${params.resultsSchema}.ancestors
-        where descendant_concept_id = ${params.concept_id}
+        where d_concept_id = ${params.concept_id}
         group by 1,2,3,4,5,6,7,8,9
         order by 1,2,3,4,5,6,7,8,9
         `,
@@ -303,19 +303,19 @@ function concepts(cdm) { // consolidating?
     sqlTemplate: params => `
         select *
         from ${params.resultsSchema}.ancestors
-        where ancestor_concept_id = ${params.concept_id}
+        where a_concept_id = ${params.concept_id}
         `});
   generateRemoteMethod({
     apiName:'conceptDescendantGroups', cdm, returns,
     accepts:schemaArgs.concat({arg: 'concept_id', type: 'number', required: true}),
     sqlTemplate: params => `
-        select  case when ancestor_concept_id = ${params.concept_id} then 'ancestor rec' else 'descendant rec' end as role,
+        select  case when a_concept_id = ${params.concept_id} then 'ancestor rec' else 'descendant rec' end as role,
                 a_domain_id, a_standard_concept, a_vocabulary_id, a_concept_class_id,
                 d_domain_id, d_standard_concept, d_vocabulary_id, d_concept_class_id,
                 count(*) cc, 
-                array_unique(array_agg(min_levels_of_separation)) min_levels
+                ${params.resultsSchema}.array_unique(array_agg(min_levels_of_separation)) min_levels
         from ${params.resultsSchema}.ancestors
-        where ancestor_concept_id = ${params.concept_id}
+        where a_concept_id = ${params.concept_id}
         group by 1,2,3,4,5,6,7,8,9
         order by 1,2,3,4,5,6,7,8,9
         `,
@@ -395,6 +395,7 @@ function concepts(cdm) { // consolidating?
                       on cr.relationship_id=r.relationship_id
                 join ${p.cdmSchema}.concept c 
                       on cr.concept_id_2 = c.concept_id
+                         and c.invalid_reason is null
 
                 where cr.concept_id_1 = $1
                   and cr.invalid_reason is null
@@ -436,6 +437,7 @@ function concepts(cdm) { // consolidating?
                       on cr.relationship_id=r.relationship_id
                 join ${params.cdmSchema}.concept c 
                       on cr.concept_id_2 = c.concept_id
+                         and c.invalid_reason is null
 
                 where cr.concept_id_1 = ${params.concept_id}
                   and cr.invalid_reason is null

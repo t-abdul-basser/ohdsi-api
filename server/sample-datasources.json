@@ -1,0 +1,16 @@
+{
+  "db": {
+    "name": "db",
+    "connector": "memory"
+  },
+  "ohdsi": {
+    "host": "localhost",
+    "port": 5432,
+    "url": "postgres://ohdsi_admin_user:admin1@localhost/OHDSI?currentSchema=public",
+    "database": "OHDSI",
+    "password": "admin1",
+    "name": "ohdsi",
+    "user": "ohdsi_admin_user",
+    "connector": "postgresql"
+  }
+}
